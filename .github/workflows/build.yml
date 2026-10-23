@@ -7,6 +7,12 @@ on:
   release:
     types: [published]
 
+# 必须显式给写权限：默认的 GITHUB_TOKEN 是只读，
+# softprops/action-gh-release 挂 APK 时会报
+# "Resource not accessible by integration"（update-a-release）
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
