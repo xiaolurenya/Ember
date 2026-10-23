@@ -1,4 +1,6 @@
 import java.io.FileInputStream
+import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -19,25 +21,29 @@ val keystoreProps = Properties().apply {
  * 从签名密钥库里算出证书 SHA-256，烧进 BuildConfig。
  * 运行时 Guard 拿它跟 APK 实际签名比对 → 能识别二次打包。
  * 没配 keystore（debug 构建）时返回空串，Guard 会自动跳过校验。
+ *
+ * ⚠️ .kts 里必须显式 import java.security.*，不能写全限定名：
+ *   「java」在 Gradle Kotlin DSL 里是 Project 的扩展属性（JavaPluginExtension），
+ *   写 java.security.KeyStore 会被解析成 java.security → Unresolved reference。
  */
 fun signingFingerprint(): String {
     val store = keystoreProps["storeFile"]?.toString()
-    if (store.isNullOrBlank() || !file(store).exists()) return ""
+    if (store.isNullOrBlank() || !rootProject.file(store).exists()) return ""
     val alias = keystoreProps["keyAlias"]?.toString() ?: return ""
     val pw = keystoreProps["storePassword"]?.toString()?.toCharArray() ?: return ""
     return try {
         // .jks 里存的可能是 PKCS12 也可能是 JKS，两种都试
         val ks = runCatching {
-            java.security.KeyStore.getInstance("PKCS12").apply {
+            KeyStore.getInstance("PKCS12").apply {
                 FileInputStream(store).use { load(it, pw) }
             }
         }.getOrElse {
-            java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType()).apply {
+            KeyStore.getInstance(KeyStore.getDefaultType()).apply {
                 FileInputStream(store).use { load(it, pw) }
             }
         }
         val cert = ks.getCertificate(alias) ?: return ""
-        java.security.MessageDigest.getInstance("SHA-256")
+        MessageDigest.getInstance("SHA-256")
             .digest(cert.encoded)
             .joinToString("") { "%02x".format(it) }
     } catch (t: Throwable) {
