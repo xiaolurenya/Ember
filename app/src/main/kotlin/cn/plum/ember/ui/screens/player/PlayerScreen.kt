@@ -268,9 +268,9 @@ fun PlayerScreen(
                 }
                 .pointerInput(item.id) {
                     detectDragGestures(
-                        onDragStart = { x, y ->
-                            gestureStartX = x
-                            gestureStartY = y
+                        onDragStart = { offset ->
+                            gestureStartX = offset.x
+                            gestureStartY = offset.y
                             gestureStartPos = state.positionSec.toFloat()
                             // 起手方向决定模式：先假设是水平 seek
                             gestureMode = null
