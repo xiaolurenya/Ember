@@ -142,7 +142,7 @@ class AlistAdapter(override val source: MediaSource) : SourceAdapter {
     }
 
     override suspend fun detail(id: String): MediaItem? =
-        items(id.takeBeforeLast('/'), 0, 1)
+        items(id.takeBeforeLast("/"), 0, 1)
             .firstOrNull { it.id == id }
             ?.copy(id = id, path = id)
 
@@ -282,7 +282,7 @@ class WebDavAdapter(override val source: MediaSource) : SourceAdapter {
     }
 
     override suspend fun detail(id: String): MediaItem? =
-        items(id.takeBeforeLast('/'), 0, 1).firstOrNull { it.id == id }
+        items(id.takeBeforeLast("/"), 0, 1).firstOrNull { it.id == id }
 
     private fun String?.takeBeforeLast(sep: String): String? {
         if (this == null) return null

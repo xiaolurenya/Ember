@@ -9,9 +9,10 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -133,8 +134,9 @@ object Http {
         source: MediaSource? = null,
         headers: Map<String, String> = emptyMap()
     ): Response {
+        val json = "application/json; charset=utf-8".toMediaTypeOrNull()
         val b = Request.Builder().url(url)
-            .post(RequestBody.create(okhttp3.MediaType.parse("application/json; charset=utf-8"), body))
+            .post(body.toRequestBody(json))
         headers.forEach { (k, v) -> b.header(k, v) }
         source?.extraHeaders?.forEach { (k, v) ->
             if (k !in headers.keys && !k.equals("User-Agent", true)) b.header(k, v)

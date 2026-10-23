@@ -13,7 +13,9 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import cn.plum.ember.util.Json
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 
 private val Context.dataStore by preferencesDataStore(name = "ember_prefs")
 
@@ -71,25 +73,27 @@ class Prefs(private val ctx: Context) {
         val onboarded = booleanPreferencesKey("onboarded")
     }
 
-    val flow: Flow<PlayerSettings> = ctx.dataStore.data.map { p ->
+    val flow: Flow<PlayerSettings> = ctx.dataStore.data.map { it.toSettings() }
+
+    /** Preferences → PlayerSettings（只此一处，避免两处默认值漂移） */
+    private fun androidx.datastore.preferences.core.Preferences.toSettings(): PlayerSettings =
         PlayerSettings(
-            hwdec = p[K.hwdec] ?: true,
-            cacheSecs = p[K.cacheSecs] ?: 20,
-            demuxerMaxMb = p[K.demuxerMaxMb] ?: 150,
-            networkTimeout = p[K.networkTimeout] ?: 15,
-            autoSkipIntro = p[K.autoSkipIntro] ?: true,
-            autoPlayNext = p[K.autoPlayNext] ?: true,
-            defaultSpeed = p[K.defaultSpeed] ?: 1.0f,
-            aspectMode = p[K.aspectMode] ?: "origin",
-            showDecoderInfo = p[K.showDecoderInfo] ?: false,
-            hdrPassthrough = p[K.hdrPassthrough] ?: true,
-            seekStep = p[K.seekStep] ?: 10,
-            landscapePlayer = p[K.landscapePlayer] ?: true,
-            homeShelves = (p[K.homeShelves] ?: "resume,recent,movies,series").split(','),
-            backupWebdav = p[K.backupWebdav] ?: "",
-            backupUser = p[K.backupUser] ?: ""
+            hwdec = this[K.hwdec] ?: true,
+            cacheSecs = this[K.cacheSecs] ?: 20,
+            demuxerMaxMb = this[K.demuxerMaxMb] ?: 150,
+            networkTimeout = this[K.networkTimeout] ?: 15,
+            autoSkipIntro = this[K.autoSkipIntro] ?: true,
+            autoPlayNext = this[K.autoPlayNext] ?: true,
+            defaultSpeed = this[K.defaultSpeed] ?: 1.0f,
+            aspectMode = this[K.aspectMode] ?: "origin",
+            showDecoderInfo = this[K.showDecoderInfo] ?: false,
+            hdrPassthrough = this[K.hdrPassthrough] ?: true,
+            seekStep = this[K.seekStep] ?: 10,
+            landscapePlayer = this[K.landscapePlayer] ?: true,
+            homeShelves = (this[K.homeShelves] ?: "resume,recent,movies,series").split(','),
+            backupWebdav = this[K.backupWebdav] ?: "",
+            backupUser = this[K.backupUser] ?: ""
         )
-    }
 
     suspend fun set(transform: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         ctx.dataStore.edit { transform(it) }
@@ -111,35 +115,19 @@ class Prefs(private val ctx: Context) {
 
     /** 同步读上次使用的源（冷启动一次，可接受 runBlocking） */
     fun lastSourceIdBlocking(): String? = try {
-        kotlinx.coroutines.runBlocking {
-            kotlinx.coroutines.flow.first(ctx.dataStore.data)[K.lastSourceId]
-        }
+        runBlocking { ctx.dataStore.data.first()[K.lastSourceId] }
     } catch (_: Throwable) { null }
 
-    suspend fun snapshot(): PlayerSettings {
-        var s = PlayerSettings()
-        ctx.dataStore.data.collect { p ->
-            s = PlayerSettings(
-                hwdec = p[K.hwdec] ?: true,
-                cacheSecs = p[K.cacheSecs] ?: 20,
-                demuxerMaxMb = p[K.demuxerMaxMb] ?: 150,
-                networkTimeout = p[K.networkTimeout] ?: 15,
-                autoSkipIntro = p[K.autoSkipIntro] ?: true,
-                autoPlayNext = p[K.autoPlayNext] ?: true,
-                defaultSpeed = p[K.defaultSpeed] ?: 1.0f,
-                aspectMode = p[K.aspectMode] ?: "origin",
-                showDecoderInfo = p[K.showDecoderInfo] ?: false,
-                hdrPassthrough = p[K.hdrPassthrough] ?: true,
-                seekStep = p[K.seekStep] ?: 10,
-                landscapePlayer = p[K.landscapePlayer] ?: true,
-                homeShelves = (p[K.homeShelves] ?: "resume,recent,movies,series").split(','),
-                backupWebdav = p[K.backupWebdav] ?: "",
-                backupUser = p[K.backupUser] ?: ""
-            )
-            return@collect
-        }
-        return s
-    }
+    /** 一次性读全量设置 */
+    suspend fun snapshot(): PlayerSettings = ctx.dataStore.data.first().toSettings()
+
+    /**
+     * 同步快照。只给「必须立刻拿到值」的场景用（比如 remember { } 里构造播放内核），
+     * 普通 UI 请订阅 flow。DataStore 首次读在几百微秒量级，可接受。
+     */
+    fun snapshotBlocking(): PlayerSettings = try {
+        runBlocking { snapshot() }
+    } catch (_: Throwable) { PlayerSettings() }
 }
 
 /**

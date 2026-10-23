@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val s = remember { App.prefs.snapshotBlocking(androidx.compose.ui.platform.LocalContext.current) }
+    val s = remember { App.prefs.snapshotBlocking() }
     var hwdec by remember { mutableStateOf(s.hwdec) }
     var cacheSecs by remember { mutableFloatStateOf(s.cacheSecs.toFloat()) }
     var autoSkip by remember { mutableStateOf(s.autoSkipIntro) }

@@ -56,25 +56,29 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
     }
 
     // ================= 登录 / 测试 =================
-    override suspend fun test(): Result<Unit> = try {
-        val body = JsonObject().apply {
-            addProperty("Username", source.username ?: "")
-            addProperty("Pw", source.token ?: "")   // Emby 的密码放在 Pw 字段
+    override suspend fun test(): Result<Unit> {
+        return try {
+            val body = JsonObject().apply {
+                addProperty("Username", source.username ?: "")
+                addProperty("Pw", source.token ?: "")   // Emby 的密码放在 Pw 字段
+            }
+            val resp = Http.postJson(
+                url("/Users/AuthenticateByName"), Json.gson.toJson(body), source, headers(auth = true)
+            )
+            val text = resp.body?.string()
+            resp.close()
+            if (!resp.isSuccessful) {
+                return Result.failure(RuntimeException("登录失败 HTTP ${resp.code}：用户名或密码错误"))
+            }
+            val j = Json.gson.fromJson(text, JsonObject::class.java)
+            userId = j?.getAsJsonObject("User")?.get("Id")?.asString
+            accessToken = j?.get("AccessToken")?.asString
+            if (userId.isNullOrBlank()) {
+                Result.failure(RuntimeException("服务器返回异常：缺少 User.Id"))
+            } else Result.success(Unit)
+        } catch (t: Throwable) {
+            Result.failure(RuntimeException("无法连接服务器：${t.message ?: "网络错误"}"))
         }
-        val resp = Http.postJson(url("/Users/AuthenticateByName"), Json.gson.toJson(body), source, headers(auth = true))
-        val text = resp.body?.string()
-        resp.close()
-        if (!resp.isSuccessful) {
-            return Result.failure(RuntimeException("登录失败 HTTP ${resp.code}：用户名或密码错误"))
-        }
-        val j = Json.gson.fromJson(text, JsonObject::class.java)
-        userId = j?.getAsJsonObject("User")?.get("Id")?.asString
-        accessToken = j?.get("AccessToken")?.asString
-        if (userId.isNullOrBlank()) {
-            Result.failure(RuntimeException("服务器返回异常：缺少 User.Id"))
-        } else Result.success(Unit)
-    } catch (t: Throwable) {
-        Result.failure(RuntimeException("无法连接服务器：${t.message ?: "网络错误"}"))
     }
 
     protected suspend fun ensureAuth(): Result<Unit> {
@@ -90,11 +94,12 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         resp.close()
         if (!resp.isSuccessful) return emptyList()
         return parseItems(text).map {
+            // Gson 的 JsonObject 没有 optString，统一走 get(...)?.asString
             Library(
-                id = it.optString("Id", ""),
-                name = it.optString("Name", "未命名"),
-                kind = it.optString("CollectionType", "mixed"),
-                image = posterUrl(it.optString("Id"))
+                id = it.get("Id")?.asString ?: "",
+                name = it.get("Name")?.asString ?: "未命名",
+                kind = it.get("CollectionType")?.asString ?: "mixed",
+                image = posterUrl(it.get("Id")?.asString ?: "")
             )
         }
     }

@@ -80,7 +80,8 @@ class MpvEngine(
     suspend fun start(): Boolean = withContext(Dispatchers.Main) {
         if (mpv != null) return@withContext true
         try {
-            val m = MPV(appCtx)
+            // mpv-android-lib 0.1.12 的真实签名：无参构造 + create(ctx) + init()
+            val m = MPV()
             // ---- ① nativeCreate 之前：这些都是 build-time option，必须 init 前下 ----
             m.setOptionString("config", "no")
             m.setOptionString("vo", "gpu-next")
@@ -104,9 +105,9 @@ class MpvEngine(
             m.setOptionString("sub-use-ffi", "no")
             m.setOptionString("blend-subtitles", "video")
 
-            // ---- ② create + init ----
-            m.nativeCreate(appCtx.applicationContext)
-            m.nativeInit()
+            // ---- ② create（建 mpv handle）+ init（真正初始化）----
+            m.create(appCtx.applicationContext)
+            m.init()
 
             // ---- ③ init 之后：观察属性，接事件 ----
             m.observeProperty("time-pos", MPV_FORMAT_DOUBLE)
@@ -156,8 +157,7 @@ class MpvEngine(
     fun destroy() {
         val m = mpv ?: return
         try { m.detachSurface() } catch (_: Throwable) {}
-        try { m.destroySession() } catch (_: Throwable) {}
-        try { m.nativeDestroy() } catch (_: Throwable) {}
+        try { m.destroy() } catch (_: Throwable) {}   // destroySession() + nativeDestroy()
         mpv = null
         surface = null
         scope.cancel()
@@ -329,8 +329,9 @@ class MpvEngine(
         }
         scope.launch {
             m.propFlow<MPVNode>("video-params").collect { v ->
-                val w = v?.get("w")?.asInt() ?: 0
-                val h = v?.get("h")?.asInt() ?: 0
+                // MPVNode.asInt() 返回的是 Long（IntNode 存 Long），必须显式转 Int
+                val w = v?.get("w")?.asInt()?.toInt() ?: 0
+                val h = v?.get("h")?.asInt()?.toInt() ?: 0
                 val prim = v?.get("color-primaries")?.asString() ?: ""
                 val trc = v?.get("color-trc")?.asString() ?: ""
                 _state.value = _state.value.copy(

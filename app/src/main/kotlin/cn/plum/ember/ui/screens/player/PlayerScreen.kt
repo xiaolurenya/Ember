@@ -110,7 +110,7 @@ fun PlayerScreen(
     }
 
     // ---- 初始设置 ----
-    val settings = remember { App.prefs.snapshotBlocking(context) }
+    val settings = remember { App.prefs.snapshotBlocking() }
 
     val engine = remember { MpvEngine(context.applicationContext, settings) }
     val state by engine.state.collectAsState()
@@ -174,8 +174,22 @@ fun PlayerScreen(
     // ---- 退出时保存进度 ----
     DisposableEffect(Unit) {
         onDispose {
-            if (state.durationSec > 0) {
-                repo.reportProgress(source?.id ?: "", item, state.positionSec.toLong(), state.durationSec.toLong())
+            // onDispose 不是协程上下文，且此刻组合的协程已被取消 —— 直接同步落本地库，
+            // 服务器回写交给上面那个 10 秒周期任务，不在这里做。
+            val dur = state.durationSec.toLong()
+            val pos = state.positionSec.toLong()
+            if (dur > 0) {
+                runCatching {
+                    val sid = source?.id ?: ""
+                    cn.plum.ember.data.App.db.saveProgress(
+                        cn.plum.ember.data.PlayProgress(
+                            sid, item.id, pos, dur, watched = pos >= dur * 0.95
+                        )
+                    )
+                    cn.plum.ember.data.App.db.recordHistory(
+                        sid, item.id, item.title, item.poster, pos, dur
+                    )
+                }
             }
             engine.destroy()
         }
@@ -587,12 +601,3 @@ private fun getVolume(ctx: Context): Float {
     return am.getStreamVolume(AudioManager.STREAM_MUSIC) / max.toFloat()
 }
 
-/** 收集 StateFlow 为 Compose State（收集到当前组合生命周期内） */
-
-/** 收集 StateFlow 为 Compose State（收集到当前组合生命周期内） */
-
-private fun cn.plum.ember.data.Prefs.snapshotBlocking(ctx: Context): cn.plum.ember.data.PlayerSettings {
-    var s = cn.plum.ember.data.PlayerSettings()
-    kotlinx.coroutines.runBlocking { s = snapshot() }
-    return s
-}

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -51,6 +52,7 @@ import cn.plum.ember.data.LibraryRepo
 import cn.plum.ember.data.MediaItem
 import cn.plum.ember.data.MediaSource
 import cn.plum.ember.ui.theme.Ember
+import cn.plum.ember.ui.theme.EmberSoft
 import cn.plum.ember.ui.theme.Ink
 import cn.plum.ember.ui.theme.InkRaised
 import cn.plum.ember.ui.theme.Scrim
@@ -151,7 +153,7 @@ private fun DetailContent(
     val target = playingEp ?: item
     val resumeSec = if (playingEp != null) {
         // 剧集单集的进度：查本地
-        source?.id?.let { repo.let { App_db(it, target) } } ?: 0L
+        source?.id?.let { sid -> localResumeSec(sid, target) } ?: 0L
     } else item.positionSec
 
     Box(Modifier.fillMaxSize()) {
@@ -419,5 +421,6 @@ private fun EpisodeRow(ep: MediaItem, onSelectEp: () -> Unit) {
     }
 }
 
-private fun App_db(sourceId: String, item: MediaItem): Long =
+/** 本地续播进度（服务器端没给 positionSec 时用） */
+private fun localResumeSec(sourceId: String, item: MediaItem): Long =
     cn.plum.ember.data.App.db.progressOf(sourceId, item.id)?.positionSec ?: 0L
