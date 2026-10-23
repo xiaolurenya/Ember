@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- 启动主题：Splash 期间由系统绘制，避免冷启动白屏 -->
+    <style name="Theme.Ember" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink_900</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:colorAccent">@color/ember</item>
+    </style>
+
+</resources>

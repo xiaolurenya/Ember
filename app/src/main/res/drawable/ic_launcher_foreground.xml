@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：炭火橙渐变「余烬环」+ 播放三角 + 飘散的火星 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 余烬环：主环，橙渐变（左 Deep → 右 Ember），顶部留缺口表示「正在燃」 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,20.5
+            A33.5,33.5 0 1,1 53.9,20.5"
+        android:strokeWidth="7"
+        android:strokeCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:endX="88"
+                android:endY="88"
+                android:startX="20"
+                android:startY="20"
+                android:type="linear">
+                <item android:color="#FFFF7A18" android:offset="0.0" />
+                <item android:color="#FFD24E00" android:offset="0.55" />
+                <item android:color="#FFFFA253" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 播放三角：居中，略微下沉保持视觉重心 -->
+    <path
+        android:fillColor="#FFF5F1EC"
+        android:pathData="M49,41
+            L74,54.5
+            L49,68
+            Z"
+        android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFFFA253" />
+
+    <!-- 火星三粒：越靠上越小越淡，做出上升感 -->
+    <path android:fillColor="#FFFF7A18" android:pathData="M77,29 A2.6,2.6 0 1,0 77,28.9" />
+    <path
+        android:fillColor="#FFFFA253"
+        android:fillAlpha="0.85"
+        android:pathData="M85,41 A1.8,1.8 0 1,0 85,40.9" />
+    <path
+        android:fillColor="#FFFFA253"
+        android:fillAlpha="0.55"
+        android:pathData="M69,21 A1.4,1.4 0 1,0 69,20.9" />
+
+</vector>

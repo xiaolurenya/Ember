@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ember</string>
+    <string name="app_subtitle">原画直出 · 私有影音</string>
+
+    <!-- 通用 -->
+    <string name="action_back">返回</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_save">保存</string>
+    <string name="action_delete">删除</string>
+    <string name="action_retry">重试</string>
+    <string name="action_open">打开</string>
+
+    <!-- 播放器 -->
+    <string name="player_lock">锁定</string>
+    <string name="player_speed">倍速</string>
+    <string name="player_audio">音轨</string>
+    <string name="player_subtitle">字幕</string>
+    <string name="player_aspect">画面比例</string>
+    <string name="player_info">解码信息</string>
+    <string name="player_next">下一集</string>
+    <string name="player_prev">上一集</string>
+</resources>

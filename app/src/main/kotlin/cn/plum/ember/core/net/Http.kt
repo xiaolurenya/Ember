@@ -1,0 +1,186 @@
+package cn.plum.ember.core.net
+
+import cn.plum.ember.data.MediaSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.ConnectionPool
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+
+/**
+ * 统一网络层。
+ *
+ * 关键设计：**默认关闭 OkHttp 自动跟随 302**。
+ * 原因（踩过的坑）：网盘直链在 302 过程中会下发鉴权 Cookie（比如 115 的
+ * UID/CID/SEID + 一个新的 session），如果让底层 libmpv 自己跟跳转，它拿不到
+ * 这些 Cookie，第二次请求 CDN 就会 403。所以：
+ *
+ *   App 层 → OkHttp（手动跟跳转，沿途收集 Set-Cookie）→ 把最终 URL + Cookie 一起交给 mpv
+ */
+object Http {
+    /** 每个源一份 OkHttpClient（不同源代理/UA/TLS 配置不同） */
+    private val clients = ConcurrentHashMap<String, OkHttpClient>()
+
+    /** 全局默认 UA，可在源里覆盖 */
+    const val DEFAULT_UA: String =
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+    private val trustAll = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+
+    private val trustAllSsl: SSLContext by lazy {
+        SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
+        }
+    }
+
+    /** 内存 CookieJar：跟 302 时收集沿途 Cookie */
+    private val cookieJar = object : CookieJar {
+        private val store = ConcurrentHashMap<String, List<Cookie>>()
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            val key = "${url.scheme}://${url.host}:${url.port}"
+            store[key] = (store[key] ?: emptyList()).let { old ->
+                // 同名 Cookie 用新的覆盖旧的（Set-Cookie 会话刷新）
+                val names = cookies.map { it.name }.toSet()
+                old.filterNot { it.name in names } + cookies
+            }
+        }
+
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            val key = "${url.scheme}://${url.host}:${url.port}"
+            return store[key] ?: emptyList()
+        }
+
+        fun clear() = store.clear()
+    }
+
+    /** 取该源对应的 OkHttpClient */
+    fun client(source: MediaSource?): OkHttpClient {
+        val key = source?.id ?: "default"
+        return clients.getOrPut(key) { build(source) }
+    }
+
+    private fun build(source: MediaSource?): OkHttpClient {
+        val b = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(source?.let { 70 } ?: 30, TimeUnit.SECONDS)   // 大码率网盘直链给长超时
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(true)
+            .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+            .cookieJar(cookieJar)
+            .followRedirects(false)      // 核心：手动跟 302
+            .followSslRedirects(false)
+
+        // 自定义 UA / Referer / Cookie / 其它头
+        val ua = source?.extraHeaders?.entries
+            ?.firstOrNull { it.key.equals("User-Agent", true) }?.value
+        b.addInterceptor { chain ->
+            val req = chain.request().newBuilder()
+                .header("User-Agent", ua ?: source?.extraHeaders?.entries
+                    ?.firstOrNull { false }?.value ?: DEFAULT_UA)
+                .build()
+            chain.proceed(req)
+        }
+
+        if (source?.skipTlsVerify == true) {
+            b.sslSocketFactory(trustAllSsl.socketFactory, trustAll)
+            b.hostnameVerifier(HostnameVerifier { _, _ -> true })
+        }
+        if (source?.useProxy == true && !source.proxyUrl.isNullOrBlank()) {
+            val u = source.proxyUrl!!.toHttpUrlOrNull()
+            if (u != null) {
+                b.proxy(java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress(u.host, u.port)))
+            }
+        }
+        return b.build()
+    }
+
+    fun clearCookies() = cookieJar.clear()
+
+    /** 简单 GET，返回 Response（调用方负责 close） */
+    fun get(url: String, source: MediaSource? = null, headers: Map<String, String> = emptyMap()): Response {
+        val b = Request.Builder().url(url).get()
+        headers.forEach { (k, v) -> b.header(k, v) }
+        source?.extraHeaders?.forEach { (k, v) ->
+            if (k !in headers.keys && !k.equals("User-Agent", true)) b.header(k, v)
+        }
+        return client(source).newCall(b.build()).execute()
+    }
+
+    /** POST JSON */
+    fun postJson(
+        url: String,
+        body: String,
+        source: MediaSource? = null,
+        headers: Map<String, String> = emptyMap()
+    ): Response {
+        val b = Request.Builder().url(url)
+            .post(RequestBody.create(okhttp3.MediaType.parse("application/json; charset=utf-8"), body))
+        headers.forEach { (k, v) -> b.header(k, v) }
+        source?.extraHeaders?.forEach { (k, v) ->
+            if (k !in headers.keys && !k.equals("User-Agent", true)) b.header(k, v)
+        }
+        return client(source).newCall(b.build()).execute()
+    }
+
+    /** 手动跟随 302，收集沿途所有 Set-Cookie 和最终 URL */
+    data class Resolved(val finalUrl: String, val cookies: Map<String, String>, val status: Int)
+
+    suspend fun resolveRedirects(
+        url: String,
+        source: MediaSource? = null,
+        headers: Map<String, String> = emptyMap(),
+        maxHops: Int = 10
+    ): Resolved = withContext(Dispatchers.IO) {
+        var current = url
+        var status = 0
+        val cookies = linkedMapOf<String, String>()
+        repeat(maxHops) {
+            val resp = get(current, source, headers)
+            status = resp.code
+            // 收集本次响应下发的所有 Set-Cookie
+            resp.headers("Set-Cookie").forEach { raw ->
+                val kv = raw.substringBefore(';').trim()
+                val i = kv.indexOf('=')
+                if (i > 0) cookies[kv.substring(0, i).trim()] = kv.substring(i + 1).trim()
+            }
+            // 3xx 且有 Location 就继续跳
+            val loc = resp.header("Location")
+            resp.close()
+            if (status in 300..399 && !loc.isNullOrBlank()) {
+                current = java.net.URI(current).resolve(java.net.URI(loc)).toString()
+                return@repeat
+            }
+            return@withContext Resolved(current, cookies, status)
+        }
+        Resolved(current, cookies, status)
+    }
+
+    /** 判断 URL 是否需要走 resolveRedirects（网盘 302 场景） */
+    fun isDirectPlayable(url: String): Boolean {
+        // m3u8/HLS 让 mpv 自己处理即可；mp4/mkv 等一般也直接可播
+        return !url.contains("alist") && !url.contains("115.com") && !url.contains("115cdn")
+    }
+}
+
+/** OkHttp Call 简易协程扩展 */
+suspend fun Call.await(): Response = withContext(Dispatchers.IO) { execute() }

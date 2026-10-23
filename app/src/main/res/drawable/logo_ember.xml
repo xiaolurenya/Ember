@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash / 应用内顶端用的完整品牌标（含背景），Compose Image 可直接渲染 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- 深炭底 -->
+    <path android:pathData="M0,0 L512,0 L512,512 L0,512 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="256"
+                android:centerY="276"
+                android:gradientRadius="300"
+                android:type="radial">
+                <item android:color="#FF241C15" android:offset="0.0" />
+                <item android:color="#FF171310" android:offset="0.55" />
+                <item android:color="#FF0B0908" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 余烬环 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M256,96
+            A160,160 0 1,1 255.6,96"
+        android:strokeWidth="34"
+        android:strokeCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:endX="416"
+                android:endY="416"
+                android:startX="96"
+                android:startY="96"
+                android:type="linear">
+                <item android:color="#FFFF7A18" android:offset="0.0" />
+                <item android:color="#FFD24E00" android:offset="0.55" />
+                <item android:color="#FFFFA253" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 播放三角 -->
+    <path
+        android:fillColor="#FFF5F1EC"
+        android:pathData="M229,191
+            L352,256
+            L229,321
+            Z"
+        android:strokeWidth="7"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFFFA253" />
+
+    <!-- 上升火星 -->
+    <path android:fillColor="#FFFF7A18" android:pathData="M368,132 A12,12 0 1,0 368,131.8" />
+    <path
+        android:fillColor="#FFFFA253"
+        android:fillAlpha="0.85"
+        android:pathData="M406,190 A8.5,8.5 0 1,0 406,189.8" />
+    <path
+        android:fillColor="#FFFFA253"
+        android:fillAlpha="0.55"
+        android:pathData="M330,98 A6.5,6.5 0 1,0 330,97.8" />
+
+</vector>

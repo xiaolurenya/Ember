@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- ============ 基础色：深色影院 + 炭火橙 ============ -->
+    <color name="ink_950">#FF0B0908</color>   <!-- 最底：近乎纯黑的炭色 -->
+    <color name="ink_900">#FF12100E</color>   <!-- App 背景 -->
+    <color name="ink_850">#FF17140F</color>   <!-- 卡片/表面 -->
+    <color name="ink_800">#FF1E1A15</color>   <!-- 抬升表面 -->
+    <color name="ink_700">#FF2A241C</color>   <!-- 描边/分割 -->
+
+    <!-- 炭火橙主色系 -->
+    <color name="ember">#FFFF7A18</color>     <!-- 主强调色：外焰 -->
+    <color name="ember_soft">#FFFFA253</color><!-- 聚焦高亮 -->
+    <color name="ember_deep">#FFD24E00</color><!-- 内焰/按压 -->
+    <color name="ember_dim">#FF3A2410</color> <!-- 橙色低透明度底 -->
+
+    <color name="text_hi">#FFF5F1EC</color>
+    <color name="text_mid">#FFB8AEA4</color>
+    <color name="text_low">#FF7D7268</color>
+
+    <!-- 播放器 UI 用 -->
+    <color name="player_scrim">#CC000000</color>
+    <color name="focus_ring">#FFFFFFFF</color>
+
+</resources>
