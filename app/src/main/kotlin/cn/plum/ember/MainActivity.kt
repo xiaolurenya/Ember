@@ -4,11 +4,21 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -17,6 +27,7 @@ import androidx.navigation.NavType
 import cn.plum.ember.data.App
 import cn.plum.ember.data.LibraryRepo
 import cn.plum.ember.data.MediaItem
+import cn.plum.ember.security.Guard
 import cn.plum.ember.ui.screens.detail.DetailScreen
 import cn.plum.ember.ui.screens.home.HomeScreen
 import cn.plum.ember.ui.screens.library.LibraryItemsScreen
@@ -25,7 +36,11 @@ import cn.plum.ember.ui.screens.search.SearchScreen
 import cn.plum.ember.ui.screens.settings.SettingsScreen
 import cn.plum.ember.ui.screens.sources.SourcesScreen
 import cn.plum.ember.ui.screens.splash.SplashScreen
+import cn.plum.ember.ui.theme.Ember
 import cn.plum.ember.ui.theme.EmberTheme
+import cn.plum.ember.ui.theme.InkRaised
+import cn.plum.ember.ui.theme.TextHi
+import cn.plum.ember.ui.theme.TextMid
 import kotlinx.coroutines.launch
 
 /**
@@ -57,26 +72,56 @@ object Routes {
     fun player(itemId: String, version: Int) = "player/${java.net.URLEncoder.encode(itemId, "UTF-8")}/$version"
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 fun EmberRoot() {
     val nav = rememberNavController()
+    val ctx = LocalContext.current
     val repo = remember { LibraryRepo() }
     val scope = rememberCoroutineScope()
     var activeSourceId by remember { mutableStateOf<String?>(null) }
     var bootReady by remember { mutableStateOf(false) }
+    // 加固自检：只拦「签名被改」和「调试器附加」这两种铁证，其它只告警
+    var alarms by remember { mutableStateOf<List<Guard.Finding>>(emptyList()) }
 
-    // 首次进入：取上次使用的源
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    // 首次进入：取上次使用的源 + 安全自检
+    LaunchedEffect(Unit) {
         val list = App.sources.all()
         val last = App.prefs.lastSourceIdBlocking()
         activeSourceId = list.firstOrNull { it.id == last }?.id
             ?: list.firstOrNull()?.id
+        alarms = try {
+            Guard.scan(ctx).filter { it.level == Guard.Level.ALARM }
+        } catch (_: Throwable) { emptyList() }
         bootReady = true
     }
 
     val activeSource = activeSourceId?.let { App.sources.find(it) }
 
     if (!bootReady) return
+
+    // 安全告警：明确告知但不强行退出（误杀代价太大）
+    if (alarms.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { alarms = emptyList() },
+            title = { Text("安全提醒", color = TextHi) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    alarms.forEach { f ->
+                        Text(
+                            "· ${f.title}\n${f.detail}",
+                            color = TextMid, fontSize = 13.sp, lineHeight = 19.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { alarms = emptyList() }) {
+                    Text("我知道了", color = Ember)
+                }
+            },
+            containerColor = InkRaised
+        )
+    }
 
     NavHost(navController = nav, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) {
