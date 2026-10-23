@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Splash / 应用内顶端用的完整品牌标（含背景），Compose Image 可直接渲染 -->
+<!--
+  Splash / 应用内用的品牌标（512 viewport，**透明背景**）。
+  Splash 页本身就是 #0B0908 深炭色，播放三角的洞会透出它 —— 这样品牌标
+  在任何深色页面上都没有「方框感」，火苗是浮着的。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="512dp"
@@ -7,62 +11,50 @@
     android:viewportWidth="512"
     android:viewportHeight="512">
 
-    <!-- 深炭底 -->
-    <path android:pathData="M0,0 L512,0 L512,512 L0,512 Z">
+    <!-- 外焰（中央镂空播放三角） -->
+    <path
+        android:fillType="evenOdd"
+        android:pathData="M256,108
+            C256,180 138,212 138,300
+            A118,118 0 0,0 374,300
+            C374,212 256,180 256,108
+            Z
+            M230,262 L288,300 L230,338 Z">
         <aapt:attr name="android:fillColor">
             <gradient
-                android:centerX="256"
-                android:centerY="276"
-                android:gradientRadius="300"
-                android:type="radial">
-                <item android:color="#FF241C15" android:offset="0.0" />
-                <item android:color="#FF171310" android:offset="0.55" />
-                <item android:color="#FF0B0908" android:offset="1.0" />
+                android:type="linear"
+                android:startX="256"
+                android:startY="108"
+                android:endX="256"
+                android:endY="418">
+                <item android:color="#FFFFB85C" android:offset="0.0" />
+                <item android:color="#FFFF7A18" android:offset="0.45" />
+                <item android:color="#FFC63F00" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- 余烬环 -->
+    <!-- 内焰 -->
     <path
-        android:fillColor="#00000000"
-        android:pathData="M256,96
-            A160,160 0 1,1 255.6,96"
-        android:strokeWidth="34"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
+        android:fillType="evenOdd"
+        android:pathData="M256,210
+            C256,258 196,262 196,320
+            A60,60 0 0,0 316,320
+            C316,262 256,258 256,210
+            Z
+            M230,262 L288,300 L230,338 Z">
+        <aapt:attr name="android:fillColor">
             <gradient
-                android:endX="416"
-                android:endY="416"
-                android:startX="96"
-                android:startY="96"
-                android:type="linear">
-                <item android:color="#FFFF7A18" android:offset="0.0" />
-                <item android:color="#FFD24E00" android:offset="0.55" />
-                <item android:color="#FFFFA253" android:offset="1.0" />
+                android:type="linear"
+                android:startX="256"
+                android:startY="210"
+                android:endX="256"
+                android:endY="380">
+                <item android:color="#FFFFE9BC" android:offset="0.0" />
+                <item android:color="#FFFFC24A" android:offset="0.5" />
+                <item android:color="#FFFF8A2B" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
-
-    <!-- 播放三角 -->
-    <path
-        android:fillColor="#FFF5F1EC"
-        android:pathData="M229,191
-            L352,256
-            L229,321
-            Z"
-        android:strokeWidth="7"
-        android:strokeLineJoin="round"
-        android:strokeColor="#FFFFA253" />
-
-    <!-- 上升火星 -->
-    <path android:fillColor="#FFFF7A18" android:pathData="M368,132 A12,12 0 1,0 368,131.8" />
-    <path
-        android:fillColor="#FFFFA253"
-        android:fillAlpha="0.85"
-        android:pathData="M406,190 A8.5,8.5 0 1,0 406,189.8" />
-    <path
-        android:fillColor="#FFFFA253"
-        android:fillAlpha="0.55"
-        android:pathData="M330,98 A6.5,6.5 0 1,0 330,97.8" />
 
 </vector>
