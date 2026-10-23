@@ -82,7 +82,11 @@ class MpvEngine(
         try {
             // mpv-android-lib 0.1.12 的真实签名：无参构造 + create(ctx) + init()
             val m = MPV()
-            // ---- ① nativeCreate 之前：这些都是 build-time option，必须 init 前下 ----
+
+            // ---- ① create：建出 mpv handle，此后才有得可设 ----
+            m.create(appCtx.applicationContext)
+
+            // ---- ② init 之前下发 option（这里有且只有这一次机会，init 后改不了）----
             m.setOptionString("config", "no")
             m.setOptionString("vo", "gpu-next")
             m.setOptionString("gpu-context", "android")
@@ -105,11 +109,10 @@ class MpvEngine(
             m.setOptionString("sub-use-ffi", "no")
             m.setOptionString("blend-subtitles", "video")
 
-            // ---- ② create（建 mpv handle）+ init（真正初始化）----
-            m.create(appCtx.applicationContext)
+            // ---- ③ init（真正初始化）----
             m.init()
 
-            // ---- ③ init 之后：观察属性，接事件 ----
+            // ---- ④ init 之后：观察属性，接事件 ----
             m.observeProperty("time-pos", MPV_FORMAT_DOUBLE)
             m.observeProperty("duration", MPV_FORMAT_DOUBLE)
             m.observeProperty("demuxer-cache-time", MPV_FORMAT_DOUBLE)
