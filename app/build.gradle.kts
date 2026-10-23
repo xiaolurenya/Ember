@@ -15,6 +15,39 @@ val keystoreProps = Properties().apply {
     }
 }
 
+/**
+ * 从签名密钥库里算出证书 SHA-256，烧进 BuildConfig。
+ * 运行时 Guard 拿它跟 APK 实际签名比对 → 能识别二次打包。
+ * 没配 keystore（debug 构建）时返回空串，Guard 会自动跳过校验。
+ */
+fun signingFingerprint(): String {
+    val store = keystoreProps["storeFile"]?.toString()
+    if (store.isNullOrBlank() || !file(store).exists()) return ""
+    val alias = keystoreProps["keyAlias"]?.toString() ?: return ""
+    val pw = keystoreProps["storePassword"]?.toString()?.toCharArray() ?: return ""
+    return try {
+        // .jks 里存的可能是 PKCS12 也可能是 JKS，两种都试
+        val ks = runCatching {
+            java.security.KeyStore.getInstance("PKCS12").apply {
+                FileInputStream(store).use { load(it, pw) }
+            }
+        }.getOrElse {
+            java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType()).apply {
+                FileInputStream(store).use { load(it, pw) }
+            }
+        }
+        val cert = ks.getCertificate(alias) ?: return ""
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(cert.encoded)
+            .joinToString("") { "%02x".format(it) }
+    } catch (t: Throwable) {
+        println("读取签名指纹失败（不影响构建）：${t.message}")
+        ""
+    }
+}
+
+val signFingerprint = signingFingerprint()
+
 android {
     namespace = "cn.plum.ember"
     compileSdk = 35
@@ -23,14 +56,19 @@ android {
         applicationId = "cn.plum.ember"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         // 只出 arm64 + armeabi-v7a：x86 基本用不上，且能砍掉一半体积
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
         resourceConfigurations += setOf("zh", "en")
+
+        // 加固用：APK 证书指纹，运行时防二次打包
+        buildConfigField("String", "SIGN_FINGERPRINT", "\"$signFingerprint\"")
+        // 构建时间戳，UI 上显示「构建于 xxxx」
+        buildConfigField("long", "BUILD_TIME", System.currentTimeMillis().toString() + "L")
     }
 
     signingConfigs {
@@ -47,8 +85,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false        // mpv 的 JNI 回调依赖类名，先不混淆
-            isShrinkResources = false
+            // 加固一环：混淆 + 压缩。mpv 的 JNI 回调类已在 proguard-rules.pro 里 keep 住，
+            // 我们自己的 Gson 模型同样保留字段名，详见该文件注释。
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = if (keystoreProps["storeFile"] != null) {
                 signingConfigs.getByName("release")
             } else {
