@@ -26,14 +26,13 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build Release APK
-        working-directory: ember
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Ember-APK
-          path: ember/app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       # release: published 时把 APK 挂到 Release
@@ -41,6 +40,6 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ember/app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
