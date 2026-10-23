@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 的备份/转移规则：加固用，不允许把 App 数据转移或备份出去。
+     凭据在 EncryptedSharedPreferences 里，但整机备份后仍可能被离线处理，
+     所以这里只放行「无」——换机就重新登录一次，代价远小于泄露。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
