@@ -31,7 +31,10 @@
 
     <application
         android:name=".EmberApp"
-        android:allowBackup="true"
+        <!-- 加固：禁止 adb backup 整机导出。凭据虽是加密的，但导出后仍可被离线爆破 -->
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:banner="@mipmap/ic_launcher"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
