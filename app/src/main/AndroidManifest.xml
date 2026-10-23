@@ -29,9 +29,9 @@
         android:name="android.software.leanback"
         android:required="false" />
 
+    <!-- 加固：allowBackup=false 禁止 adb backup 整机导出（凭据虽加密，导出后仍可离线爆破） -->
     <application
         android:name=".EmberApp"
-        <!-- 加固：禁止 adb backup 整机导出。凭据虽是加密的，但导出后仍可被离线爆破 -->
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
