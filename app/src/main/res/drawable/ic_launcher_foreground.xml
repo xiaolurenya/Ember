@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：炭火橙渐变「余烬环」+ 播放三角 + 飘散的火星 -->
+<!--
+  自适应图标前景 v2：一枚火苗（外焰深橙 + 内焰亮金），
+  播放三角用 evenOdd 挖空 —— 洞里透出的是 background 层的深炭色。
+  只有两个元素、一个整体，小尺寸下依然清晰。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
@@ -7,47 +11,50 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 余烬环：主环，橙渐变（左 Deep → 右 Ember），顶部留缺口表示「正在燃」 -->
+    <!-- 外焰：尖端 → 左缘 → 底部半圆 → 右缘，中央挖播放三角 -->
     <path
-        android:fillColor="#00000000"
-        android:pathData="M54,20.5
-            A33.5,33.5 0 1,1 53.9,20.5"
-        android:strokeWidth="7"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
+        android:fillType="evenOdd"
+        android:pathData="M54,31.1
+            C54,41.8 36.5,46.5 36.5,59.5
+            A17.5,17.5 0 0,0 71.5,59.5
+            C71.5,46.5 54,41.8 54,31.1
+            Z
+            M50.1,53.9 L58.7,59.5 L50.1,65.1 Z">
+        <aapt:attr name="android:fillColor">
             <gradient
-                android:endX="88"
-                android:endY="88"
-                android:startX="20"
-                android:startY="20"
-                android:type="linear">
-                <item android:color="#FFFF7A18" android:offset="0.0" />
-                <item android:color="#FFD24E00" android:offset="0.55" />
-                <item android:color="#FFFFA253" android:offset="1.0" />
+                android:type="linear"
+                android:startX="54"
+                android:startY="31"
+                android:endX="54"
+                android:endY="77">
+                <item android:color="#FFFFB85C" android:offset="0.0" />
+                <item android:color="#FFFF7A18" android:offset="0.45" />
+                <item android:color="#FFC63F00" android:offset="1.0" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- 播放三角：居中，略微下沉保持视觉重心 -->
+    <!-- 内焰：更亮的一层，底部对齐外焰下部 -->
     <path
-        android:fillColor="#FFF5F1EC"
-        android:pathData="M49,41
-            L74,54.5
-            L49,68
-            Z"
-        android:strokeWidth="1.6"
-        android:strokeLineJoin="round"
-        android:strokeColor="#FFFFA253" />
-
-    <!-- 火星三粒：越靠上越小越淡，做出上升感 -->
-    <path android:fillColor="#FFFF7A18" android:pathData="M77,29 A2.6,2.6 0 1,0 77,28.9" />
-    <path
-        android:fillColor="#FFFFA253"
-        android:fillAlpha="0.85"
-        android:pathData="M85,41 A1.8,1.8 0 1,0 85,40.9" />
-    <path
-        android:fillColor="#FFFFA253"
-        android:fillAlpha="0.55"
-        android:pathData="M69,21 A1.4,1.4 0 1,0 69,20.9" />
+        android:fillType="evenOdd"
+        android:pathData="M54,46.2
+            C54,53.3 45.1,53.9 45.1,62.4
+            A8.9,8.9 0 0,0 62.9,62.4
+            C62.9,53.9 54,53.3 54,46.2
+            Z
+            M50.1,53.9 L58.7,59.5 L50.1,65.1 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="46"
+                android:endX="54"
+                android:endY="71">
+                <item android:color="#FFFFE9BC" android:offset="0.0" />
+                <item android:color="#FFFFC24A" android:offset="0.5" />
+                <item android:color="#FFFF8A2B" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
 
 </vector>
