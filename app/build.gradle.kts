@@ -126,7 +126,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ---------- 播放内核：libmpv ----------
-    // 注意：这个库没有能用的 README，真实 API 是 MPV(ctx) + nativeCreate() + nativeInit()
+    // 0.1.12 真实 API（README 是准的，别照抄旧版博客）：
+    //   val mpv = MPV(); mpv.create(ctx); mpv.setOptionString(...); mpv.init()
+    //   mpv.propFlow<T>("pause") / mpv.prop["pause"] / mpv.destroy()
+    //   MPVNode.asInt() 返回 Long（IntNode 存 Long），取宽高要 .toInt()
     implementation("io.github.abdallahmehiz:mpv-android-lib:0.1.12")
 
     // ---------- 网络 / 图片 / JSON ----------
