@@ -76,7 +76,6 @@ fun SourcesScreen(
     onDone: () -> Unit,
     onEditSource: (MediaSource) -> Unit = {}
 ) {
-    val scope = rememberCoroutineScope()
     var list by remember { mutableStateOf(App.sources.all()) }
     var editing by remember { mutableStateOf<MediaSource?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -128,13 +127,11 @@ fun SourcesScreen(
             SourceForm(
                 initial = null,
                 onDismiss = { adding = false },
+                onTest = { s, pwd -> repo.testSource(s, pwd) },
                 onSave = { s, pwd ->
-                    scope.launch {
-                        repo.upsertSource(s, pwd).onSuccess {
-                            list = App.sources.all()
-                            adding = false
-                        }
-                    }
+                    val r = repo.upsertSource(s, pwd)
+                    if (r.isSuccess) list = App.sources.all()
+                    r
                 }
             )
         }
@@ -144,13 +141,11 @@ fun SourcesScreen(
             SourceForm(
                 initial = s,
                 onDismiss = { editing = null },
+                onTest = { ns, pwd -> repo.testSource(ns, pwd) },
                 onSave = { ns, pwd ->
-                    scope.launch {
-                        repo.upsertSource(ns, pwd).onSuccess {
-                            list = App.sources.all()
-                            editing = null
-                        }
-                    }
+                    val r = repo.upsertSource(ns, pwd)
+                    if (r.isSuccess) list = App.sources.all()
+                    r
                 }
             )
         }
@@ -224,14 +219,17 @@ private fun SourceRow(source: MediaSource, onEdit: () -> Unit, onDelete: () -> U
 private fun SourceForm(
     initial: MediaSource?,
     onDismiss: () -> Unit,
-    onSave: (MediaSource, String?) -> Unit
+    onTest: suspend (MediaSource, String?) -> Result<Unit>,
+    onSave: suspend (MediaSource, String?) -> Result<Unit>
 ) {
+    val scope = rememberCoroutineScope()
     var type by remember { mutableStateOf(initial?.type ?: SourceType.EMBY) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var baseUrl by remember { mutableStateOf(initial?.baseUrl?.removePrefix("http://")?.removePrefix("https://") ?: "") }
     var https by remember { mutableStateOf(initial?.baseUrl?.startsWith("https") ?: false) }
     var username by remember { mutableStateOf(initial?.username ?: "") }
     var password by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf(initial?.token ?: "") }
     var extraHeaders by remember { mutableStateOf(
         initial?.extraHeaders?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: ""
     ) }
@@ -241,10 +239,53 @@ private fun SourceForm(
     var scanRoot by remember { mutableStateOf(initial?.scanRoot ?: "") }
     var locked by remember { mutableStateOf(initial?.locked ?: false) }
     var testing by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
     var testMsg by remember { mutableStateOf<String?>(null) }
 
-    val isMediaServer = type == SourceType.EMBY || type == SourceType.JELLYFIN || type == SourceType.PLEX
-    val isToken = type == SourceType.ALIST
+    /** 凭据形态：用户名+密码 / 单 Token / 无需凭据 */
+    val needUserPass = type == SourceType.EMBY || type == SourceType.JELLYFIN || type == SourceType.WEBDAV
+    val needToken = type == SourceType.PLEX || type == SourceType.ALIST
+    val busy = testing || saving
+    val hasSavedSecret = initial?.secretRef != null
+
+    /** 表单 → MediaSource。⚠️ secretRef 必须透传，否则编辑保存后旧密码丢失 */
+    fun buildSource(): MediaSource {
+        val cleanedBase = baseUrl.trim().trimEnd('/')
+        val fullBase = when (type) {
+            SourceType.LOCAL -> cleanedBase
+            else -> "${if (https) "https" else "http"}://$cleanedBase"
+        }
+        val hdrs = extraHeaders.lineSequence()
+            .mapNotNull { line ->
+                val i = line.indexOf(':')
+                if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).trim()
+            }
+            .toMap()
+        return MediaSource(
+            id = initial?.id ?: UUID.randomUUID().toString().take(8),
+            type = type,
+            name = name.ifBlank { type.label },
+            baseUrl = fullBase,
+            username = if (needUserPass) username.takeIf { it.isNotBlank() } else null,
+            token = if (needToken) token.takeIf { it.isNotBlank() } else null,
+            extraHeaders = hdrs,
+            useProxy = useProxy,
+            proxyUrl = if (useProxy) proxyUrl.takeIf { it.isNotBlank() } else null,
+            skipTlsVerify = skipTls,
+            scanRoot = if (type == SourceType.LOCAL) scanRoot.ifBlank { "/storage/emulated/0" } else null,
+            locked = locked,
+            secretRef = initial?.secretRef
+        )
+    }
+
+    /** 密码单独传（不落库，走 EncryptedSharedPreferences）；留空 = 沿用原密码 */
+    fun buildPassword(): String? =
+        if (needUserPass) password.takeIf { it.isNotBlank() } else null
+
+    fun feedback(r: Result<Unit>, okText: String) {
+        testMsg = if (r.isSuccess) "✓ $okText"
+        else "✗ ${r.exceptionOrNull()?.message ?: "失败"}"
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -286,7 +327,7 @@ private fun SourceForm(
                         Text("使用 HTTPS", color = TextMid, fontSize = 13.sp)
                     }
                 }
-                if (isMediaServer) {
+                if (needUserPass) {
                     OutlinedTextField(
                         value = username, onValueChange = { username = it },
                         label = { Text("用户名") },
@@ -294,16 +335,23 @@ private fun SourceForm(
                     )
                     OutlinedTextField(
                         value = password, onValueChange = { password = it },
-                        label = { Text(if (type == SourceType.PLEX) "X-Plex-Token" else "密码") },
+                        label = { Text(if (hasSavedSecret) "密码（已保存，留空则不修改）" else "密码") },
+                        placeholder = { if (hasSavedSecret) Text("••••••••") else null },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth(), singleLine = true
                     )
                 }
-                if (isToken) {
+                if (needToken) {
                     OutlinedTextField(
-                        value = password, onValueChange = { password = it },
-                        label = { Text("Token / Cookie（AList 的 token 或 115 的 Cookie）") },
+                        value = token, onValueChange = { token = it },
+                        label = { Text(if (type == SourceType.PLEX) "X-Plex-Token" else "Token / Cookie") },
+                        placeholder = { Text(
+                            if (type == SourceType.PLEX) "在 Plex Web 里 F12 取 X-Plex-Token"
+                            else "AList 的 token，或 115 的 UID=xx; CID=xx; SEID=xx"
+                        ) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth(), singleLine = true
                     )
                 }
@@ -344,46 +392,60 @@ private fun SourceForm(
                     Text("生物识别锁（进入需指纹/面容）", color = TextMid, fontSize = 13.sp)
                 }
 
-                testMsg?.let { Text(it, color = if (it.startsWith("✓")) Color(0xFF4CD964) else Color(0xFFFF6B6B), fontSize = 12.sp) }
+                if (busy) Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(Modifier.size(16.dp), color = Ember, strokeWidth = 2.dp)
+                    Text(if (testing) "正在连接…" else "正在保存…", color = TextMid, fontSize = 12.sp)
+                }
+                testMsg?.let {
+                    Text(it,
+                        color = if (it.startsWith("✓")) Color(0xFF4CD964) else Color(0xFFFF6B6B),
+                        fontSize = 12.sp, lineHeight = 17.sp)
+                }
             }
         },
         confirmButton = {
-            if (testing) CircularProgressIndicator(Modifier.size(20.dp), color = Ember)
-            else Button(onClick = {
-                // 组装 MediaSource
-                val cleanedBase = baseUrl.trim().trimEnd('/')
-                val fullBase = when (type) {
-                    SourceType.LOCAL -> cleanedBase
-                    else -> "${if (https) "https" else "http"}://$cleanedBase"
-                }
-                // 解析自定义头
-                val hdrs = extraHeaders.lineSequence()
-                    .mapNotNull { line ->
-                        val i = line.indexOf(':')
-                        if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).trim()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 测试连接：先探活再保存，避免「点了没反应」
+                TextButton(
+                    enabled = !busy && baseUrl.isNotBlank(),
+                    onClick = {
+                        testMsg = null
+                        testing = true
+                        scope.launch {
+                            val r = runCatching { onTest(buildSource(), buildPassword()) }
+                                .getOrElse { Result.failure(it) }
+                            testing = false
+                            feedback(r, "连接成功")
+                        }
                     }
-                    .toMap()
+                ) { Text("测试连接", color = if (busy) TextLow else Ember) }
 
-                val s = MediaSource(
-                    id = initial?.id ?: UUID.randomUUID().toString().take(8),
-                    type = type,
-                    name = name.ifBlank { type.label },
-                    baseUrl = fullBase,
-                    username = username.takeIf { it.isNotBlank() },
-                    token = if (isToken) password.takeIf { it.isNotBlank() } else null,
-                    extraHeaders = hdrs,
-                    useProxy = useProxy,
-                    proxyUrl = if (useProxy) proxyUrl.takeIf { it.isNotBlank() } else null,
-                    skipTlsVerify = skipTls,
-                    scanRoot = if (type == SourceType.LOCAL) scanRoot.ifBlank { "/storage/emulated/0" } else null,
-                    locked = locked
-                )
-                val pwd = if (isMediaServer) password.takeIf { it.isNotBlank() } else null
-                onSave(s, pwd)
-            }) { Text("保存") }
+                Spacer(Modifier.width(4.dp))
+                Button(
+                    enabled = !busy && baseUrl.isNotBlank(),
+                    onClick = {
+                        testMsg = null
+                        saving = true
+                        scope.launch {
+                            val r = runCatching { onSave(buildSource(), buildPassword()) }
+                                .getOrElse { Result.failure(it) }
+                            saving = false
+                            if (r.isSuccess) {
+                                onDismiss()
+                            } else {
+                                // 关键：失败必须说出来，不然用户以为按钮坏了
+                                feedback(r, "已保存")
+                            }
+                        }
+                    }
+                ) { Text(if (saving) "保存中…" else "保存") }
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消", color = TextMid) }
+            TextButton(enabled = !saving, onClick = onDismiss) { Text("取消", color = TextMid) }
         },
         containerColor = InkRaised
     )
