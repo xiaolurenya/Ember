@@ -29,20 +29,44 @@ object App {
 class LibraryRepo {
     private fun adapter(source: MediaSource): SourceAdapter = AdapterRegistry.of(source)
 
-    /** 新建/更新源，密码落到 Secrets，列表持久化到 SP */
+    /**
+     * 新建/更新源，密码落到 Secrets，列表持久化到 SP。
+     *
+     * ⚠️ 两个必须记住的坑（「点保存没反应」就是栽在这）：
+     *   1. 表单里的密码是单独传进来的（MediaSource.token 此刻仍是 null），
+     *      **测试前必须把密码注入进去**，否则 Emby/Jellyfin/WebDAV 拿空密码去登录 → 必然失败。
+     *   2. AdapterRegistry 按 sourceId 缓存适配器，**编辑已有源时必须先 invalidate**，
+     *      否则拿旧地址/旧凭据去做连接测试，改了半天测的还是旧配置。
+     */
     suspend fun upsertSource(s: MediaSource, password: String?): Result<Unit> {
-        val tested = adapter(s).test()
+        val secretKey = "src-${s.id}"
+        // ① 丢弃旧适配器缓存（编辑场景）
+        AdapterRegistry.invalidate(s.id)
+        // ② 测试用的副本：带上本次填的密码（没填就沿用 s.token，比如 Plex/AList）
+        val toTest = s.copy(token = password ?: s.token)
+        val tested = adapter(toTest).test()
         if (tested.isFailure) {
+            // 失败不写库，但缓存已经清了，下次会重新建适配器（会用最新配置）
             return Result.failure(tested.exceptionOrNull() ?: RuntimeException("连接失败"))
         }
-        // 密码/token 存加密 SP
-        val secretKey = "src-${s.id}"
-        if (password != null) {
+        // ③ 密码/token 存加密 SP
+        if (!password.isNullOrBlank()) {
             App.secrets.put(secretKey, password)
         }
-        val stored = s.copy(secretRef = if (password != null || s.token != null) secretKey else s.secretRef)
-        App.sources.upsert(stored.copy(lastUsed = System.currentTimeMillis()))
+        val stored = s.copy(
+            secretRef = if (!password.isNullOrBlank() || !s.token.isNullOrBlank()) secretKey else s.secretRef,
+            lastUsed = System.currentTimeMillis()
+        )
+        App.sources.upsert(stored)
+        // ④ 让缓存里那个「带明文密码」的测试副本失效，下次走 hydrated() 正规注入
+        AdapterRegistry.invalidate(s.id)
         return Result.success(Unit)
+    }
+
+    /** 只做连接测试，不写库（表单「测试连接」按钮用） */
+    suspend fun testSource(s: MediaSource, password: String?): Result<Unit> {
+        AdapterRegistry.invalidate(s.id)
+        return adapter(s.copy(token = password ?: s.token)).test()
     }
 
     /** 删除源（同时清掉它的密码） */
