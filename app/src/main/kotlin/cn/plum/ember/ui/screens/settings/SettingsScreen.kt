@@ -23,6 +23,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,7 +46,9 @@ import cn.plum.ember.ui.theme.TextHi
 import cn.plum.ember.ui.theme.TextLow
 import cn.plum.ember.ui.theme.TextMid
 import cn.plum.ember.util.Format
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 设置页：解码 / 缓存 / 播放行为 / 字幕偏移 */
 @Composable
@@ -111,6 +114,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             scope.launch { App.prefs.setSeekStep(v.toInt()) }
         }
 
+        // ---- 安全自检 ----
+        SecuritySection()
+
         Spacer(Modifier.height(30.dp))
         Text(
             "Ember v1.0.0\n基于 libmpv 内核 · STRM/302 直连 · 未加密蓝光/UHD/DVD 直读",
@@ -118,6 +124,59 @@ fun SettingsScreen(onBack: () -> Unit) {
             modifier = Modifier.padding(horizontal = 20.dp)
         )
         Spacer(Modifier.height(30.dp))
+    }
+}
+
+/** 安全状态：把加固自检的结果摊开给用户看（不藏着掖着） */
+@Composable
+private fun SecuritySection() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var findings by remember { mutableStateOf<List<cn.plum.ember.security.Guard.Finding>?>(null) }
+
+    LaunchedEffect(Unit) {
+        findings = try {
+            withContext(kotlinx.coroutines.Dispatchers.Default) {
+                cn.plum.ember.security.Guard.scan(ctx)
+            }
+        } catch (_: Throwable) { emptyList() }
+    }
+
+    SettingSection("安全")
+    Column(
+        Modifier
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(InkRaised)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (findings == null) {
+            Text("正在自检…", color = TextLow, fontSize = 13.sp)
+        } else {
+            findings!!.forEach { f ->
+                val color = when (f.level) {
+                    cn.plum.ember.security.Guard.Level.OK -> Color(0xFF4CD964)
+                    cn.plum.ember.security.Guard.Level.WARN -> Color(0xFFFFB020)
+                    cn.plum.ember.security.Guard.Level.ALARM -> Color(0xFFFF6B6B)
+                }
+                Row {
+                    Text(
+                        when (f.level) {
+                            cn.plum.ember.security.Guard.Level.OK -> "✓"
+                            cn.plum.ember.security.Guard.Level.WARN -> "!"
+                            cn.plum.ember.security.Guard.Level.ALARM -> "✗"
+                        },
+                        color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(f.title, color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(f.detail, color = TextLow, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
