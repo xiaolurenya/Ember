@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  放开明文 HTTP。
+  为什么必须放：Android 9+ 默认禁止 App 发起 http:// 明文请求
+  （报错原文：CLEARTEXT communication to x.x.x.x not permitted by network
+  security policy）。播放器天生要连各种内网服务——Emby/Jellyfin/AList/
+  WebDAV/NAS 网关，几乎全是 http，不加这条连自家 NAS 都登不上。
+  加密凭据仍由 EncryptedSharedPreferences 保管，不受影响。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
