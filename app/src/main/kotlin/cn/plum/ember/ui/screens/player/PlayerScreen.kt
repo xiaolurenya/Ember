@@ -113,13 +113,8 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     val tv = isTv()
 
-    // 完整的 MediaItem（详情拉回后补齐集数/时长/海报）
+    // 完整的 MediaItem（详情拉回后补齐集数/时长/海报/进度）
     var item by remember { mutableStateOf(MediaItem(id = itemId, sourceId = source?.id ?: "", title = "")) }
-    LaunchedEffect(itemId) {
-        try {
-            repo.detail(source?.id ?: "", itemId)?.let { item = it }
-        } catch (_: Throwable) {}
-    }
 
     // ---- 初始设置 ----
     val settings = remember { App.prefs.snapshotBlocking() }
@@ -141,9 +136,13 @@ fun PlayerScreen(
     // 解析失败（区别于 mpv 播放错误的 state.error）：必须显示出来，之前只打 logcat 用户什么都看不到
     var loadError by remember { mutableStateOf<String?>(null) }
 
-    // ---- 内核初始化 + 加载（load 内部会等 surface 就绪）----
+    // ---- 内核初始化 + 详情 + 加载（⚠️ 必须顺序：先拉详情补 positionSec，
+    //      再解析播放地址，否则记忆续播位置丢失（竞态实测踩坑））----
     LaunchedEffect(itemId) {
         engine.start()
+        try {
+            repo.detail(source?.id ?: "", itemId)?.let { item = it }
+        } catch (_: Throwable) {}
         val r = repo.playable(source?.id ?: "", item, versionIndex)
         if (r.isSuccess) {
             loadError = null
