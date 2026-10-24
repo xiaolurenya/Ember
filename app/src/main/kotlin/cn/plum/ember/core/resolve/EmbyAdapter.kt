@@ -284,7 +284,8 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
      * 罪魁是 strm 的 /Download 拉内容：Emby 中转大文件时断流会抛
      * ProtocolException: unexpected end of stream，之前裸奔没接。
      */
-    override suspend fun playable(item: MediaItem, versionIndex: Int): Result<Playable> = try {
+    override suspend fun playable(item: MediaItem, versionIndex: Int): Result<Playable> {
+        return try {
         ensureAuth().fold(
             onSuccess = {},
             onFailure = { t ->
@@ -355,6 +356,7 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
     } catch (t: Throwable) {
         // 兜底：任何异常（网络/解析/鉴权）都不允许杀死进程
         Result.failure(RuntimeException(cn.plum.ember.core.net.Http.describe(t), t))
+    }
     }
 
     // ================= 进度回写 =================
