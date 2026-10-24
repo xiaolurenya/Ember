@@ -68,7 +68,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import cn.plum.ember.core.mpv.MpvEngine
 import cn.plum.ember.data.App
 import cn.plum.ember.data.LibraryRepo
 import cn.plum.ember.data.MediaItem
@@ -119,7 +118,8 @@ fun PlayerScreen(
     // ---- 初始设置 ----
     val settings = remember { App.prefs.snapshotBlocking() }
 
-    val engine = remember { MpvEngine(context.applicationContext, settings) }
+    // 内核走进程级单例（反复 create/destroy MPV 会 native 崩溃），会话退出只 stop
+    val engine = remember { App.playerEngine(settings) }
     val state by engine.state.collectAsState()
     val brightness = remember { mutableFloatStateOf(getBrightness(view)) }
     val volume = remember { mutableFloatStateOf(getVolume(context)) }
@@ -236,7 +236,7 @@ fun PlayerScreen(
                     )
                 }
             }
-            engine.destroy()
+            engine.stop()   // 内核是进程级单例，只停播不销毁
         }
     }
 
