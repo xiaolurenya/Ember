@@ -132,9 +132,9 @@ class MpvEngine(
             m.setOptionString("cache", "auto")
             m.setOptionString("cache-secs", settings.cacheSecs.toString())
             m.setOptionString("demuxer-max-bytes", "${settings.demuxerMaxMb}MiB")
-            m.setOptionString("cache-pause", "yes")
-            m.setOptionString("cache-pause-wait", "2")
-            m.setOptionString("cache-pause-initial", "yes")
+            // ⚠️ 不开 cache-pause 系列：慢源起播时 mpv 会自动「暂停等缓存」，
+            //    time-pos 恒为 0 → deferredSeek 等不到起播、seek 全部失效，观感像假死（实测踩坑）。
+            //    缓冲不足交给 paused-for-cache 属性 → UI 缓冲圈。
             m.setOptionString("force-seekable", "yes")
             m.setOptionString("demuxer-hysteresis-secs", "10")
             m.setOptionString("network-timeout", settings.networkTimeout.toString())
