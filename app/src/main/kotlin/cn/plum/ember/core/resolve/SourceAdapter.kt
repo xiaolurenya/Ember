@@ -47,6 +47,9 @@ interface SourceAdapter {
     /** 标记已看 */
     suspend fun markWatched(item: MediaItem): Result<Unit>?
 
+    /** 取消已看（详情页勾选按钮，默认不支持） */
+    suspend fun markUnwatched(item: MediaItem): Result<Unit>? = null
+
     /** 相关推荐（可选能力，默认空） */
     suspend fun related(item: MediaItem): List<MediaItem> = emptyList()
 }
