@@ -62,8 +62,8 @@ android {
         applicationId = "cn.plum.ember"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.1.7"
+        versionCode = 10
+        versionName = "1.1.8"
 
         // 只出 arm64 + armeabi-v7a：x86 基本用不上，且能砍掉一半体积
         ndk {
