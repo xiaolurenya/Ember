@@ -88,6 +88,7 @@ class MpvEngine(
     fun deferredSeek(targetSec: Long) {
         if (targetSec <= 5) return
         val m = mpv ?: return
+        Log.e(TAG, "deferredSeek scheduled: $targetSec")
         scope.launch {
             var tries = 0
             while (tries < 75) {
@@ -98,9 +99,9 @@ class MpvEngine(
             try {
                 m.command("seek", targetSec.toString(), "absolute")
                 _state.value = _state.value.copy(positionSec = targetSec.toDouble())
-                Log.i(TAG, "deferred seek to $targetSec")
+                Log.e(TAG, "deferred seek fired after $tries tries: $targetSec")
             } catch (t: Throwable) {
-                Log.w(TAG, "deferred seek failed: ${t.message}")
+                Log.e(TAG, "deferred seek failed: ${t.message}")
             }
         }
     }
@@ -298,7 +299,7 @@ class MpvEngine(
         return try {
             m.command("loadfile", p.url, "replace")
             deferredSeek(startSec)
-            Log.i(TAG, "loadfile issued: ${p.url.take(120)} (deferredSeek=$startSec)")
+            Log.e(TAG, "loadfile issued: ${p.url.take(120)} (deferredSeek=$startSec)")
             true
         } catch (t: Throwable) {
             Log.e(TAG, "loadfile failed: ${t.message}", t)
