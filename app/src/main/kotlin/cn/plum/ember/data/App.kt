@@ -22,6 +22,17 @@ object App {
         secrets = Secrets(ctx)
         sources = SourceStore(ctx)
     }
+
+    // ---- 播放内核进程级单例 ----
+    // ⚠️ 同一进程里反复 create/destroy MPV 实例会在第二次起播时 native 崩溃
+    //    （SIGSEGV eip=0，实测：第一次播放失败退出 → 第二次进入必崩，无法 try/catch）。
+    //    所以全进程只建一个 MPV：会话退出走 stop()，destroy() 只留给进程消亡。
+    @Volatile
+    private var _engine: cn.plum.ember.core.mpv.MpvEngine? = null
+    fun playerEngine(settings: PlayerSettings): cn.plum.ember.core.mpv.MpvEngine =
+        _engine ?: synchronized(this) {
+            _engine ?: cn.plum.ember.core.mpv.MpvEngine(prefs.appCtx, settings).also { _engine = it }
+        }
 }
 
 /**
