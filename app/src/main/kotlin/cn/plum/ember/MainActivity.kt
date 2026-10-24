@@ -155,7 +155,6 @@ fun EmberRoot() {
                 repo = repo,
                 source = activeSource,
                 onOpenSourceManage = { nav.navigate(Routes.SOURCES) },
-                onPlayMedia = { mediaId -> nav.navigate(Routes.player(mediaId, 0)) },
                 onOpenDetail = { item -> nav.navigate(Routes.detail(item.id)) }
             )
         }
