@@ -43,8 +43,11 @@ class LibraryRepo {
         // ① 丢弃旧适配器缓存（编辑场景）
         AdapterRegistry.invalidate(s.id)
         // ② 测试用的副本：带上本次填的密码（没填就沿用 s.token，比如 Plex/AList）
+        // ⚠️ 必须切 IO 线程：adapter.test() 内部是 OkHttp 同步 execute()，
+        //    在主线程跑会抛 NetworkOnMainThreadException（message 为 null，
+        //    表现就是表单里一句没头没脑的「网络错误」）
         val toTest = s.copy(token = password ?: s.token)
-        val tested = adapter(toTest).test()
+        val tested = withContext(Dispatchers.IO) { adapter(toTest).test() }
         if (tested.isFailure) {
             // 失败不写库，但缓存已经清了，下次会重新建适配器（会用最新配置）
             return Result.failure(tested.exceptionOrNull() ?: RuntimeException("连接失败"))
@@ -63,10 +66,12 @@ class LibraryRepo {
         return Result.success(Unit)
     }
 
-    /** 只做连接测试，不写库（表单「测试连接」按钮用） */
+    /** 只做连接测试，不写库（表单「测试连接」按钮用）。⚠️ 同样必须 IO 线程，理由同上 */
     suspend fun testSource(s: MediaSource, password: String?): Result<Unit> {
         AdapterRegistry.invalidate(s.id)
-        return adapter(s.copy(token = password ?: s.token)).test()
+        return withContext(Dispatchers.IO) {
+            adapter(s.copy(token = password ?: s.token)).test()
+        }
     }
 
     /** 删除源（同时清掉它的密码） */
