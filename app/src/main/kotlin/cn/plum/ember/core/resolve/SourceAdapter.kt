@@ -59,7 +59,22 @@ object AdapterRegistry {
         cache.getOrPut(source.id) { create(source) }
     }
 
-    fun invalidate(sourceId: String) = synchronized(cache) { cache.remove(sourceId) }
+    /**
+     * 不走缓存、也不写缓存的新实例。
+     * 诊断器要用：诊断期间拿的凭据是「表单里临时那一份」，不能被正式适配器缓存污染，
+     * 反过来诊断也不能把缓存里那个正规实例挤掉。
+     */
+    fun fresh(source: MediaSource): SourceAdapter = create(source)
+
+    /**
+     * 丢弃缓存。⚠️ 必须连同 OkHttpClient 一起丢：
+     * Http 的 client 是按源缓存的，改了「跳过证书校验 / 代理 / 自定义头」之后
+     * 只失效适配器不失效 client，测的还是旧网络配置 —— 勾了开关跟没勾一样。
+     */
+    fun invalidate(sourceId: String) {
+        synchronized(cache) { cache.remove(sourceId) }
+        cn.plum.ember.core.net.Http.invalidate(sourceId)
+    }
 
     fun clear() = synchronized(cache) { cache.clear() }
 
