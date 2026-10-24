@@ -141,8 +141,8 @@ object StreamResolver {
         )
     }
 
-    /** 组装最终给 mpv 的请求头：源的自定义头 → 探测收集的 Cookie → 全局默认 */
-    private fun headersFor(
+    /** 组装最终给 mpv 的请求头：源的自定义头 → 探测收集的 Cookie → 全局默认（EmbyAdapter 的 /Download 直连路径也复用） */
+    fun headersFor(
         source: MediaSource?,
         extra: Map<String, String>,
         cookies: Map<String, String>
