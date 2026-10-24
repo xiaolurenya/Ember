@@ -433,7 +433,12 @@ private fun BannerSection(
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = when {
-                                resumeSec > 5 -> "继续播放 · 已看 ${Format.percent(resumeSec, maxOf(1, item.durationSec))}%"
+                                resumeSec > 5 -> {
+                                    // 已看不足 1% 显示具体时间，避免「已看 0%」的尴尬
+                                    val pct = Format.percent(resumeSec, maxOf(1, item.durationSec))
+                                    if (pct >= 1) "继续播放 · 已看 $pct%"
+                                    else "继续播放 · ${Format.duration(resumeSec)}"
+                                }
                                 else -> "播放"
                             },
                             color = GoldText,
