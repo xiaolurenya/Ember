@@ -172,6 +172,28 @@ fun SourcesScreen(
     }
 }
 
+/** 按异常特征给出排查方向（内网/模拟器场景最常见的几种都覆盖了） */
+private fun hintFor(msg: String): String = when {
+    msg.contains("NetworkOnMainThread", true) ->
+        "→ 内部错误：网络请求跑在主线程，请把这条反馈给我"
+    msg.contains("CLEARTEXT", true) ->
+        "→ 系统禁止明文 HTTP，请确认装的是最新版（已放开明文）"
+    msg.contains("Unable to resolve", true) || msg.contains("UnknownHost", true) ->
+        "→ 域名解析失败：换成 IP 地址再试"
+    msg.contains("refused", true) ->
+        "→ 连接被拒绝：端口不对，或服务没起来"
+    msg.contains("timed out", true) || msg.contains("timeout", true) ->
+        "→ 超时：模拟器/手机与服务器不在同一网段，或被防火墙拦了"
+    msg.contains("401", true) ->
+        "→ 鉴权失败：用户名或密码不对"
+    msg.contains("SSL", true) || msg.contains("Handshake", true) ->
+        "→ 证书问题：勾上「跳过 HTTPS 证书校验」"
+    msg.contains("404", true) ->
+        "→ 路径不对：检查服务器地址是否正确"
+    else ->
+        "→ 检查地址/端口，并确认模拟器与服务器能互通"
+}
+
 @Composable
 private fun SourceRow(source: MediaSource, onEdit: () -> Unit, onDelete: () -> Unit) {
     Row(
@@ -299,8 +321,13 @@ private fun SourceForm(
         if (needUserPass) password.takeIf { it.isNotBlank() } else null
 
     fun feedback(r: Result<Unit>, okText: String) {
-        testMsg = if (r.isSuccess) "✓ $okText"
-        else "✗ ${r.exceptionOrNull()?.message ?: "失败"}"
+        testMsg = if (r.isSuccess) {
+            "✓ $okText"
+        } else {
+            val raw = r.exceptionOrNull()?.message ?: "未知错误"
+            // 光报「失败」等于没报，附上针对性排查方向
+            "✗ $raw\n${hintFor(raw)}"
+        }
     }
 
     AlertDialog(
