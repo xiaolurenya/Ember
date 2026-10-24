@@ -45,7 +45,7 @@ class AlistAdapter(override val source: MediaSource) : SourceAdapter {
                 else Result.success(Unit)
             }
         } catch (t: Throwable) {
-            Result.failure(RuntimeException("无法连接：${t.message ?: "网络错误"}"))
+            Result.failure(RuntimeException(Http.describe(t)))
         }
     }
 
@@ -217,7 +217,7 @@ class WebDavAdapter(override val source: MediaSource) : SourceAdapter {
             else -> Result.failure(RuntimeException("HTTP $code"))
         }
     } catch (t: Throwable) {
-        Result.failure(RuntimeException("无法连接：${t.message ?: "网络错误"}"))
+        Result.failure(RuntimeException(Http.describe(t)))
     }
 
     override suspend fun libraries(): List<Library> = listOf(Library("/", "根目录", kind = "folder"))
