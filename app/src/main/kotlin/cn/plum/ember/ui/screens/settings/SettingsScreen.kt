@@ -62,6 +62,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var hdr by remember { mutableStateOf(s.hdrPassthrough) }
     var showInfo by remember { mutableStateOf(s.showDecoderInfo) }
     var seekStep by remember { mutableFloatStateOf(s.seekStep.toFloat()) }
+    var introSecs by remember { mutableFloatStateOf(s.introSkipSec.toFloat()) }
+    var creditsSecs by remember { mutableFloatStateOf(s.creditsLenSec.toFloat()) }
     var landscape by remember { mutableStateOf(s.landscapePlayer) }
 
     Column(
@@ -97,9 +99,17 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         SettingSection("播放行为")
-        SwitchRow("自动跳过片头片尾", "根据片头时长智能跳过", autoSkip) {
+        SwitchRow("自动跳过片头片尾", "起播在片头范围内自动跳过；片尾出现快捷卡", autoSkip) {
             autoSkip = it
             scope.launch { App.prefs.setAutoSkipIntro(it) }
+        }
+        SliderRow("片头时长", "${introSecs.toInt()} 秒", introSecs, 0f, 300f) { v ->
+            introSecs = v
+            scope.launch { App.prefs.setIntroSkipSec(v.toInt()) }
+        }
+        SliderRow("片尾时长", "${creditsSecs.toInt()} 秒", creditsSecs, 0f, 600f) { v ->
+            creditsSecs = v
+            scope.launch { App.prefs.setCreditsLenSec(v.toInt()) }
         }
         SwitchRow("自动连播下一集", "播放结束自动切下一集", autoNext) {
             autoNext = it
