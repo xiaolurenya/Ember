@@ -1,10 +1,12 @@
 package cn.plum.ember.core.resolve
 
 import cn.plum.ember.core.net.Http
+import cn.plum.ember.data.Chapter
 import cn.plum.ember.data.Library
 import cn.plum.ember.data.MediaItem
 import cn.plum.ember.data.MediaSource
 import cn.plum.ember.data.MediaVersion
+import cn.plum.ember.data.Person
 import cn.plum.ember.data.Playable
 import cn.plum.ember.util.Json
 import com.google.gson.JsonObject
@@ -172,7 +174,8 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
     private val fields = listOf(
         "Path", "MediaSources", "MediaStreams", "ProductionYear", "Overview",
         "CommunityRating", "Genres", "RunTimeTicks", "ChildCount",
-        "RecursiveItemCount", "PremiereDate", "OfficialRating", "Taglines"
+        "RecursiveItemCount", "PremiereDate", "OfficialRating", "Taglines",
+        "OriginalTitle", "ProviderIds", "Studios", "People", "Chapters"
     ).joinToString(",")
 
     override suspend fun items(libraryId: String?, page: Int, pageSize: Int): List<MediaItem> {
@@ -407,6 +410,18 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         }
     }
 
+    /** 取消已看（详情页勾选按钮的取消态） */
+    override suspend fun markUnwatched(item: MediaItem): Result<Unit>? {
+        val uid = userId ?: return null
+        return try {
+            val resp = Http.delete(url("/Users/$uid/PlayedItems/${item.id}"), source, headers())
+            resp.close()
+            Result.success(Unit)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
+
     // ================= JSON → MediaItem =================
     private fun parseItems(text: String?): List<JsonObject> {
         if (text.isNullOrBlank()) return emptyList()
@@ -470,6 +485,94 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         val runtimeTicks = j.get("RunTimeTicks")?.asLong ?: 0L
         val durationSec = runtimeTicks / 10_000_000
 
+        // ---- 详情页扩展：章节 / 演职人员 / 工作室 / 剧照 / 外部 ID / 规格面板 ----
+        val chapters = j.getAsJsonArray("Chapters")?.mapNotNull { c ->
+            (c as? JsonObject)?.let { co ->
+                Chapter(
+                    name = co.get("Name")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+                        ?: "章节",
+                    startSec = (co.get("StartPositionTicks")?.asLong ?: 0L) / 10_000_000
+                )
+            }
+        } ?: emptyList()
+
+        fun personImage(pid: String): String =
+            url("/Items/$pid/Images/Primary", mapOf("maxWidth" to "160", "quality" to "85"))
+
+        val people = j.getAsJsonArray("People")?.mapNotNull { p ->
+            (p as? JsonObject)?.let { po ->
+                val nm = po.get("Name")?.takeIf { it.isJsonPrimitive }?.asString ?: return@mapNotNull null
+                val ptype = po.get("PrimaryImageTag")
+                Person(
+                    name = nm,
+                    role = po.get("Role")?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() },
+                    image = if (ptype != null) personImage(po.get("Id")?.asString ?: "") else null
+                )
+            }
+        } ?: emptyList()
+
+        val studios = j.getAsJsonArray("Studios")?.mapNotNull { s ->
+            (s as? JsonObject)?.get("Name")?.takeIf { it.isJsonPrimitive }?.asString
+        } ?: emptyList()
+
+        val stills = j.getAsJsonArray("BackdropImageTags")?.mapIndexedNotNull { i, _ ->
+            if (i == 0) null   // 第 0 张已是 backdrop
+            else url("/Items/$id/Images/Backdrop/$i", mapOf("maxWidth" to "960", "quality" to "80"))
+        } ?: emptyList()
+
+        val providerIds = j.getAsJsonObject("ProviderIds")
+        val imdb = providerIds?.get("Imdb")?.takeIf { it.isJsonPrimitive }?.asString
+        val tmdb = providerIds?.get("Tmdb")?.takeIf { it.isJsonPrimitive }?.asString
+
+        // 规格面板：视频 / 音轨 / 字幕 / 容器体积，取第一个 MediaSource 的流信息
+        val firstSrc = sources?.firstOrNull() as? JsonObject
+        val allStreams = firstSrc?.getAsJsonArray("MediaStreams")
+        val vStream = allStreams?.firstOrNull { (it as? JsonObject)?.get("Type")?.asString == "Video" } as? JsonObject
+        val aStreams = allStreams?.filter { (it as? JsonObject)?.get("Type")?.asString == "Audio" }
+            ?.mapNotNull { it as? JsonObject } ?: emptyList()
+        val sStreams = allStreams?.filter { (it as? JsonObject)?.get("Type")?.asString == "Subtitle" }
+            ?.mapNotNull { it as? JsonObject } ?: emptyList()
+        val specLines = buildList {
+            vStream?.let { v ->
+                val w = v.get("Width")?.asInt ?: 0
+                val h = v.get("Height")?.asInt ?: 0
+                val codec = (v.get("Codec")?.asString ?: "").uppercase()
+                val range = v.get("VideoRange")?.asString ?: ""
+                val dv = v.get("VideoRangeType")?.asString?.contains("DOVI", true) == true ||
+                        (v.get("Codec")?.asString ?: "").contains("dovi", true)
+                add(buildString {
+                    append(if (h >= 2000) "4K UHD" else if (h >= 1000) "1080P" else if (h > 0) "${h}P" else "视频")
+                    if (codec.isNotBlank()) append(" · $codec")
+                    if (w > 0 && h > 0) append(" · $w×$h")
+                    if (dv) append(" · 杜比视界")
+                    else if (range.contains("HDR", true)) append(" · $range")
+                })
+            }
+            aStreams.take(4).forEach { a ->
+                val codec = (a.get("Codec")?.asString ?: "").uppercase()
+                val ch = a.get("Channels")?.asInt ?: 0
+                val lang = a.get("Language")?.asString ?: ""
+                val title = a.get("Title")?.asString ?: ""
+                add(buildString {
+                    append("音轨 · $codec")
+                    if (ch >= 6) append(" ${ch}.1") else if (ch > 0) append(" ${ch}.0")
+                    if (lang.isNotBlank()) append(" $lang")
+                    if (title.isNotBlank() && title != lang) append(" $title")
+                })
+            }
+            if (sStreams.isNotEmpty()) {
+                val langs = sStreams.mapNotNull { it.get("Language")?.asString }.distinct().take(5)
+                add("字幕 · " + (if (langs.isEmpty()) "${sStreams.size} 条内封" else langs.joinToString("/")))
+            }
+            firstSrc?.get("Container")?.takeIf { it.isJsonPrimitive }?.asString?.let { c ->
+                val size = firstSrc.get("Size")?.asLong ?: 0L
+                add(buildString {
+                    append("容器 · ${c.uppercase()}")
+                    if (size > 0) append(" · ${"%.1f".format(size / 1073741824.0)}GB")
+                })
+            }
+        }
+
         return MediaItem(
             id = id,
             sourceId = source.id,
@@ -487,6 +590,11 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
                 ).joinToString(" · ")
             } else null,
             overview = j.get("Overview")?.asString,
+            originalTitle = j.get("OriginalTitle")?.takeIf { it.isJsonPrimitive }?.asString,
+            tagline = j.get("Taglines")?.asArray?.firstOrNull()?.takeIf { it.isJsonPrimitive }?.asString,
+            premiereDate = j.get("PremiereDate")?.takeIf { it.isJsonPrimitive }?.asString?.take(10),
+            officialRating = j.get("OfficialRating")?.takeIf { it.isJsonPrimitive }?.asString,
+            watched = userData?.get("Played")?.asBoolean == true,
             year = j.get("ProductionYear")?.asInt,
             rating = j.get("CommunityRating")?.asDouble,
             durationSec = if (durationSec > 0) durationSec else {
@@ -502,6 +610,13 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
             backdrop = if (j.has("BackdropImageTags")) backdropUrl(id) else null,
             container = versions.firstOrNull()?.container,
             path = path,
+            stills = stills,
+            chapters = chapters,
+            people = people,
+            studios = studios,
+            providerImdb = imdb,
+            providerTmdb = tmdb,
+            mediaSpec = specLines,
             tag4k = versions.any { it.height >= 2000 },
             tagHdr = versions.any {
                 it.videoCodec?.contains("hevc", true) == true &&
