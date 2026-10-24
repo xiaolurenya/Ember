@@ -60,7 +60,7 @@ class PlexAdapter(override val source: MediaSource) : SourceAdapter {
         else if (container(text) != null) Result.success(Unit)
         else Result.failure(RuntimeException("响应异常，请确认地址和 Token"))
     } catch (t: Throwable) {
-        Result.failure(RuntimeException("无法连接：${t.message ?: "网络错误"}"))
+        Result.failure(RuntimeException(Http.describe(t)))
     }
 
     override suspend fun libraries(): List<Library> {
