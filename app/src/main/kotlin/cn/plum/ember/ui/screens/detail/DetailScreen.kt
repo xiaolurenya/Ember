@@ -188,9 +188,13 @@ private fun DetailContent(
     }
 
     val target = playingEp ?: item
-    val resumeSec = if (playingEp != null) {
+    // 续播位置：服务器进度与本地进度取大者。
+    // ⚠️ 本地必须每次重组都重读 —— 播放页返回后 item 还是旧对象（positionSec=0），
+    //    只看 item.positionSec 会让「继续播放 · 已看 N%」变回「播放」（实测踩坑）。
+    val resumeSec = maxOf(
+        item.positionSec,
         source?.id?.let { sid -> localResumeSec(sid, target) } ?: 0L
-    } else item.positionSec
+    )
 
     LazyColumn(Modifier.fillMaxSize()) {
         // ================= 顶部全幅横幅 =================
