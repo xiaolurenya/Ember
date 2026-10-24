@@ -187,6 +187,16 @@ object Http {
         return client(source).newCall(b.build()).execute()
     }
 
+    /** DELETE（Emby 取消已看等） */
+    fun delete(url: String, source: MediaSource? = null, headers: Map<String, String> = emptyMap()): Response {
+        val b = Request.Builder().url(url).delete()
+        headers.forEach { (k, v) -> b.header(k, v) }
+        source?.extraHeaders?.forEach { (k, v) ->
+            if (k !in headers.keys && !k.equals("User-Agent", true)) b.header(k, v)
+        }
+        return client(source).newCall(b.build()).execute()
+    }
+
     /** 手动跟随 302，收集沿途所有 Set-Cookie 和最终 URL */
     data class Resolved(
         val finalUrl: String,
