@@ -52,6 +52,7 @@ import cn.plum.ember.ui.widgets.EmptyState
 import cn.plum.ember.ui.widgets.PosterCard
 import cn.plum.ember.ui.widgets.PosterSkeleton
 import cn.plum.ember.ui.widgets.WideCard
+import cn.plum.ember.ui.widgets.isTv
 import cn.plum.ember.ui.widgets.tvFocus
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
