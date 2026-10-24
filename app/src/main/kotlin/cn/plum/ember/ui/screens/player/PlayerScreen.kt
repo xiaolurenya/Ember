@@ -155,6 +155,18 @@ fun PlayerScreen(
         }
     }
 
+    // ---- 记忆播放：自动跳过片头（起播位置在片头范围内时一次性 seek）----
+    var introSkipped by remember { mutableStateOf(false) }
+    LaunchedEffect(state.loaded) {
+        if (state.loaded && !introSkipped && settings.autoSkipIntro &&
+            settings.introSkipSec > 0 && state.durationSec > 600 &&
+            state.positionSec < settings.introSkipSec
+        ) {
+            introSkipped = true
+            engine.seekTo(settings.introSkipSec.toDouble())
+        }
+    }
+
     // ---- 控制条自动隐藏（4 秒）----
     LaunchedEffect(controlsVisible, panelMode) {
         if (controlsVisible && panelMode == null) {
@@ -285,6 +297,43 @@ fun PlayerScreen(
                             "speed: ${state.speed}x",
                     color = Color(0xAAFFFFFF), fontSize = 10.sp, lineHeight = 14.sp
                 )
+            }
+        }
+
+        // ---- 跳过片头 / 跳过片尾 快捷卡（右下角，常显不随控制条隐藏）----
+        val showSkipIntro = state.loaded && settings.introSkipSec > 0 && state.durationSec > 600 &&
+                state.positionSec < settings.introSkipSec && state.error == null && loadError == null
+        val remainSec = state.durationSec - state.positionSec
+        val showSkipCredits = state.loaded && settings.creditsLenSec > 0 && state.durationSec > 600 &&
+                remainSec in 1.0..settings.creditsLenSec.toDouble() &&
+                state.error == null && loadError == null
+        if (showSkipIntro || showSkipCredits) {
+            Row(
+                Modifier.align(Alignment.BottomEnd)
+                    .padding(end = if (tv) 40.dp else 24.dp, bottom = if (tv) 120.dp else 96.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (showSkipIntro) {
+                    SkipCard("跳过片头") {
+                        introSkipped = true
+                        engine.seekTo(settings.introSkipSec.toDouble())
+                    }
+                }
+                if (showSkipCredits) {
+                    val hasNext = episodes.isNotEmpty() && currentEpIdx in 0 until episodes.size - 1
+                    SkipCard(if (hasNext) "跳过片尾 · 下一集" else "跳过片尾") {
+                        val next = if (hasNext) episodes.getOrNull(currentEpIdx + 1) else null
+                        if (next != null) {
+                            scope.launch {
+                                repo.markWatched(source?.id ?: "", item)
+                                val r = repo.playable(source?.id ?: "", next, versionIndex)
+                                if (r.isSuccess) engine.load(r.getOrThrow())
+                            }
+                        } else {
+                            engine.seekTo((state.durationSec - 3.0).coerceAtLeast(0.0))
+                        }
+                    }
+                }
             }
         }
 
@@ -595,6 +644,19 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SkipCard(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xB3221C15))
+            .tvFocus(1.06f, EmberSoft) { onClick() }
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 
