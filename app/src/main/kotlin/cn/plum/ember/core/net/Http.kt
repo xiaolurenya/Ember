@@ -117,6 +117,17 @@ object Http {
 
     fun clearCookies() = cookieJar.clear()
 
+    /**
+     * 把网络异常翻译成可诊断的一句话。
+     * ⚠️ 千万别再写「网络错误」这种没信息的文案——排查半天全靠这里。
+     * NetworkOnMainThreadException 的 message 是 null，只打 message 会丢掉关键线索。
+     */
+    fun describe(t: Throwable): String {
+        val cls = t.javaClass.simpleName.ifBlank { t.javaClass.name.substringAfterLast('.') }
+        val msg = t.message?.takeIf { it.isNotBlank() } ?: "（无详细信息）"
+        return "$cls: $msg"
+    }
+
     /** 简单 GET，返回 Response（调用方负责 close） */
     fun get(url: String, source: MediaSource? = null, headers: Map<String, String> = emptyMap()): Response {
         val b = Request.Builder().url(url).get()
