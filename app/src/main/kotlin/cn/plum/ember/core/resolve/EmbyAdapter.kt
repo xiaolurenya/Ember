@@ -25,6 +25,8 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
 
     protected var userId: String? = null
     protected var accessToken: String? = null
+    /** 探活拿到的服务器名+版本，报错时带上它，用户才知道到底连上了哪台机器 */
+    protected var serverName: String? = null
 
     private val deviceId: String = "ember-${source.id.hashCode().toUInt()}"
 
@@ -43,8 +45,11 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         return h
     }
 
+    /** baseUrl 末尾可能带 /（用户手输的），统一剥掉，否则拼出 //Users/... 双斜杠 */
+    protected val base: String get() = source.baseUrl.trimEnd('/')
+
     private fun url(path: String, params: Map<String, String> = emptyMap()): String {
-        val sb = StringBuilder(source.baseUrl).append(path)
+        val sb = StringBuilder(base).append(path)
         if (params.isNotEmpty()) {
             sb.append(if (path.contains('?')) '&' else '?')
             params.entries.forEachIndexed { i, (k, v) ->
@@ -56,7 +61,43 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
     }
 
     // ================= 登录 / 测试 =================
+
+    /**
+     * 连接测试 = 探活 + 登录，两段分开。
+     *
+     * 为什么要拆：
+     *   「连不上服务器」和「账号密码不对」是两类完全不同的故障，排查方向南辕北辙。
+     *   之前一股脑报「网络错误」，用户根本不知道该去查地址还是查密码。
+     *
+     *   /System/Info/Public 是 Emby/Jellyfin 的**匿名端点**，不需要任何账号，
+     *   拿得到 ServerName/Version 就证明地址、端口、协议、网络全对。
+     *
+     * ⚠️ 探活失败不能直接判死：有些反代会拦未知路径。所以探活失败只是记下来，
+     *    真正的判据是登录本身 —— 登录也挂了，才把探活的错作为根因报出去。
+     */
     override suspend fun test(): Result<Unit> {
+        var probeErr: String? = null
+
+        // ① 匿名探活
+        try {
+            val p = Http.get(url("/System/Info/Public"), source, headers(auth = true))
+            val pt = p.body?.string()
+            val code = p.code
+            p.close()
+            if (code in 200..299) {
+                val pj = Json.gson.fromJson(pt, JsonObject::class.java)
+                fun s(key: String): String? =
+                    pj?.get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+                serverName = listOfNotNull(s("ServerName"), s("Version"))
+                    .joinToString(" ").ifBlank { null }
+            } else {
+                probeErr = "探活返回 HTTP $code"
+            }
+        } catch (t: Throwable) {
+            probeErr = Http.describe(t)
+        }
+
+        // ② 登录
         return try {
             val body = JsonObject().apply {
                 addProperty("Username", source.username ?: "")
@@ -66,18 +107,37 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
                 url("/Users/AuthenticateByName"), Json.gson.toJson(body), source, headers(auth = true)
             )
             val text = resp.body?.string()
+            val code = resp.code
             resp.close()
-            if (!resp.isSuccessful) {
-                return Result.failure(RuntimeException("登录失败 HTTP ${resp.code}：用户名或密码错误"))
+
+            if (code !in 200..299) {
+                val detail = when (code) {
+                    401 -> "用户名或密码不对"
+                    403 -> "账号被禁用，或没有登录权限"
+                    404 -> "接口不存在（地址是不是少了 /emby 之类的子路径？）"
+                    else -> "HTTP $code"
+                }
+                val msg = if (probeErr != null) {
+                    "连不上服务器（$probeErr）—— 先查地址/端口/网络"
+                } else {
+                    "服务器已连上（${serverName ?: "Emby/Jellyfin"}），但登录失败：$detail"
+                }
+                return Result.failure(RuntimeException(msg))
             }
+
             val j = Json.gson.fromJson(text, JsonObject::class.java)
             userId = j?.getAsJsonObject("User")?.get("Id")?.asString
             accessToken = j?.get("AccessToken")?.asString
-            if (userId.isNullOrBlank()) {
-                Result.failure(RuntimeException("服务器返回异常：缺少 User.Id"))
+            if (userId.isNullOrBlank() || accessToken.isNullOrBlank()) {
+                Result.failure(RuntimeException("服务器响应异常：缺少 User.Id 或 AccessToken（可能不是 Emby/Jellyfin 服务）"))
             } else Result.success(Unit)
         } catch (t: Throwable) {
-            Result.failure(RuntimeException(Http.describe(t)))
+            Result.failure(
+                RuntimeException(
+                    if (probeErr != null) "连不上服务器：$probeErr"
+                    else "登录请求失败：${Http.describe(t)}"
+                )
+            )
         }
     }
 
