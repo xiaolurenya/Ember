@@ -56,7 +56,7 @@ import kotlinx.coroutines.awaitAll
  *
  * 真实数据由 repo 拉取：继续观看（resume）→ 最近添加（latest）→ 各媒体库条目。
  * 顶栏品牌名来自当前已添加的媒体源名称（动态），不再硬编码。
- * 卡片点击：电影/单集直接起播，剧集/合集进详情页选集。
+ * 卡片点击：一律进详情页（选集/版本/播放都在详情页完成）。
  */
 data class HomeSection(
     val key: String,
@@ -70,7 +70,6 @@ fun HomeScreen(
     repo: LibraryRepo,
     source: MediaSource?,
     onOpenSourceManage: () -> Unit,
-    onPlayMedia: (mediaId: String) -> Unit,
     onOpenDetail: (MediaItem) -> Unit
 ) {
     val brand = source?.name?.takeIf { it.isNotBlank() } ?: "Ember"
@@ -103,12 +102,9 @@ fun HomeScreen(
         loading = false
     }
 
-    val onClick: (MediaItem) -> Unit = { it ->
-        when (it.kind) {
-            "episode", "movie" -> onPlayMedia(it.id)
-            else -> onOpenDetail(it)   // series / folder
-        }
-    }
+    // ⚠️ 点任何影片（电影/剧集/单集/合集）一律先进详情页——
+    // 大哥明确要求：直接跳播放器没有详情页，且选集/版本都要在详情页完成
+    val onClick: (MediaItem) -> Unit = { it -> onOpenDetail(it) }
 
     Box(Modifier.fillMaxSize().background(Ink)) {
         LazyColumn(
@@ -117,10 +113,10 @@ fun HomeScreen(
         ) {
             item { TopNavBar(brand = brand, onOpenSourceManage = onOpenSourceManage) }
 
-            // 头图：取「最近添加」第一部的背景图做主视觉
+            // 头图：取「最近添加」第一部的背景图做主视觉（播放/详情都进详情页）
             val hero = sections.firstOrNull { it.key == "latest" }?.items?.firstOrNull()
                 ?: sections.firstOrNull { it.key == "resume" }?.items?.firstOrNull()
-            item { hero?.let { HomeHero(item = it, onPlay = { onClick(it) }, onDetail = { onOpenDetail(it) }) } }
+            item { hero?.let { HomeHero(item = it, onPlay = { onOpenDetail(it) }, onDetail = { onOpenDetail(it) }) } }
 
             if (loading) {
                 item { SectionSkeleton() }
