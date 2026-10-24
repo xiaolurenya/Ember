@@ -1,6 +1,7 @@
 package cn.plum.ember.data
 
 import android.content.Context
+import cn.plum.ember.core.net.Http
 import cn.plum.ember.core.resolve.AdapterRegistry
 import cn.plum.ember.core.resolve.SourceAdapter
 import cn.plum.ember.util.Json
@@ -117,13 +118,18 @@ class LibraryRepo {
 
     suspend fun playable(sourceId: String, item: MediaItem, version: Int = 0): Result<Playable> =
         withContext(Dispatchers.IO) {
-            val src = hydrated(sourceId) ?: return@withContext Result.failure(RuntimeException("源不存在"))
-            val a = adapter(src)
-            // 服务器端进度优先，其次本地
-            val merged = if (item.positionSec <= 0) {
-                item.copy(positionSec = App.db.progressOf(sourceId, item.id)?.positionSec ?: 0L)
-            } else item
-            a.playable(merged, version)
+            try {
+                val src = hydrated(sourceId) ?: return@withContext Result.failure(RuntimeException("源不存在"))
+                val a = adapter(src)
+                // 服务器端进度优先，其次本地
+                val merged = if (item.positionSec <= 0) {
+                    item.copy(positionSec = App.db.progressOf(sourceId, item.id)?.positionSec ?: 0L)
+                } else item
+                a.playable(merged, version)
+            } catch (t: Throwable) {
+                // ⚠️ 绝不让异常逃出去：协程未捕获异常会直接杀进程（播放页闪退的元凶）
+                Result.failure(RuntimeException(cn.plum.ember.core.net.Http.describe(t), t))
+            }
         }
 
     suspend fun reportProgress(sourceId: String, item: MediaItem, pos: Long, dur: Long) {
