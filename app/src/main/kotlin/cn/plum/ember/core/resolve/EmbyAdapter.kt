@@ -187,7 +187,10 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
             "SortBy" to "SortName",
             "SortOrder" to "Ascending",
             "Recursive" to "true",
-            "IncludeItemTypes" to "Movie,Series,Episode",
+            // ⚠️ 只要 Movie / Series：首页栏目不该出现「散集」（IncludeItemTypes 带上 Episode
+        //   会拉出一堆「第X集 · 某某顺利完成」这种单集卡片，大哥反馈的栏目数据就是这么乱的）。
+        //   单集只在「剧集详情 / 选集」里按需拉取。
+        "IncludeItemTypes" to "Movie,Series",
             "ImageTypeLimit" to "1"
         )
         libraryId?.let { params["ParentId"] = it }
@@ -298,9 +301,14 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         )
         val v = item.versions.getOrNull(versionIndex) ?: item.versions.firstOrNull()
 
-        // ① .strm 条目：Emby 自己解析不了，直接 500 —— 必须走 Download 拿内容
+        // ① .strm 条目：优先用 MediaSources.Path 里的内层直链（StreamGate/网盘直链服务），
+        //    resolveRedirects 跟到 302 终点即 CDN 直链，mpv 直连 —— 秒播秒 seek。
+        //    ⚠️ 绝不默认走 Emby /Download：那会让 Emby 服务器把整个片子中转一遍
+        //    （NAS 拉 CDN → 局域网转发），起播几十秒、seek 卡顿、还占 NAS 流量（实测踩坑）。
         if (item.isStrm) {
             val direct = item.strmUrl
+                ?: item.versions.getOrNull(versionIndex)?.path
+                ?: item.versions.firstOrNull()?.path
             if (!direct.isNullOrBlank() && direct.startsWith("http", true)) {
                 // Path 字段直接给了 URL 型 strm 内容 → 走标准解析管线
                 return StreamResolver.resolve(
@@ -633,7 +641,11 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
             }
         ).let {
             it.copy(
-                strmUrl = if (it.isStrm) null else null, // strm 的 URL 需要Download 时才能拿到
+                // ⭐ strm 条目的 MediaSources.Path 就是内层直链（StreamGate/网盘直链服务，实测），
+                // 提前提取出来，播放时直连 302 到 CDN —— 绝不走 Emby /Download 中转（中转=起播慢+占 NAS 流量）
+                strmUrl = if (it.isStrm)
+                    it.versions.firstOrNull()?.path?.takeIf { p -> p.startsWith("http", true) }
+                else null,
                 positionSec = it.positionSec
             )
         }
