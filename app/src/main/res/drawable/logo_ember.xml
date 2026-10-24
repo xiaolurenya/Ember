@@ -19,7 +19,7 @@
             A118,118 0 0,0 374,300
             C374,212 256,180 256,108
             Z
-            M236,257 L296,296 L236,335 Z">
+            M226,281 L286,320 L226,359 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
@@ -42,7 +42,7 @@
             A60,60 0 0,0 316,320
             C316,262 256,258 256,210
             Z
-            M236,257 L296,296 L236,335 Z">
+            M226,281 L286,320 L226,359 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
