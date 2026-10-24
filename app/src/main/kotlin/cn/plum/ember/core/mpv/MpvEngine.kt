@@ -267,9 +267,11 @@ class MpvEngine(
         }
 
         // ---- loadfile：start 选项传起始位置 ----
+        // ⚠️ 该内嵌 mpv 的 loadfile start 只收纯整数，带 + 号会报
+        //    "The loadfile option must be an integer"（模拟器实测踩坑）
         return try {
             if (startSec > 5) {
-                m.command("loadfile", p.url, "replace", "start=+$startSec")
+                m.command("loadfile", p.url, "replace", "start=$startSec")
             } else {
                 m.command("loadfile", p.url, "replace")
             }
