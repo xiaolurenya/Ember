@@ -50,6 +50,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cn.plum.ember.core.net.DiagStep
+import cn.plum.ember.core.net.Doctor
+import cn.plum.ember.core.net.Http
 import cn.plum.ember.data.App
 import cn.plum.ember.data.LibraryRepo
 import cn.plum.ember.data.MediaSource
@@ -174,6 +177,10 @@ fun SourcesScreen(
 
 /** 按异常特征给出排查方向（内网/模拟器场景最常见的几种都覆盖了） */
 private fun hintFor(msg: String): String = when {
+    msg.contains("服务器已连上", true) ->
+        "→ 网络和地址都是通的，问题只在账号：确认用户名/密码，注意 Emby 用户名区分大小写"
+    msg.contains("连不上服务器", true) ->
+        "→ 地址/端口/网络的问题：点「诊断」看具体卡在第几步"
     msg.contains("NetworkOnMainThread", true) ->
         "→ 内部错误：网络请求跑在主线程，请把这条反馈给我"
     msg.contains("CLEARTEXT", true) ->
@@ -189,7 +196,7 @@ private fun hintFor(msg: String): String = when {
     msg.contains("SSL", true) || msg.contains("Handshake", true) ->
         "→ 证书问题：勾上「跳过 HTTPS 证书校验」"
     msg.contains("404", true) ->
-        "→ 路径不对：检查服务器地址是否正确"
+        "→ 路径不对：检查服务器地址是否正确（反代场景可能需要带子路径）"
     else ->
         "→ 检查地址/端口，并确认模拟器与服务器能互通"
 }
@@ -264,13 +271,22 @@ private fun SourceForm(
     var locked by remember { mutableStateOf(initial?.locked ?: false) }
     var testing by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var diagnosing by remember { mutableStateOf(false) }
     var testMsg by remember { mutableStateOf<String?>(null) }
+    var diag by remember { mutableStateOf<List<DiagStep>?>(null) }
+
+    /**
+     * 编辑已有源时，原密码是从加密库里取出来的（不会填回输入框）。
+     * ⚠️ 这里必须读出来兜底：不读的话「密码框留空 + 点保存」会把密码传成 null，
+     *    Emby 拿空密码去登录 → 401 → 用户以为改坏了，其实是我们的 bug。
+     */
+    val savedSecret = remember(initial?.id) { initial?.secretRef?.let { App.secrets.get(it) } }
 
     /** 凭据形态：用户名+密码 / 单 Token / 无需凭据 */
     val needUserPass = type == SourceType.EMBY || type == SourceType.JELLYFIN || type == SourceType.WEBDAV
     val needToken = type == SourceType.PLEX || type == SourceType.ALIST
-    val busy = testing || saving
-    val hasSavedSecret = initial?.secretRef != null
+    val busy = testing || saving || diagnosing
+    val hasSavedSecret = !savedSecret.isNullOrBlank()
 
     /** 该类型服务的默认端口（只作输入框占位提示，留空 = 不拼端口） */
     val defaultPort = when (type) {
@@ -304,7 +320,8 @@ private fun SourceForm(
             name = name.ifBlank { type.label },
             baseUrl = fullBase,
             username = if (needUserPass) username.takeIf { it.isNotBlank() } else null,
-            token = if (needToken) token.takeIf { it.isNotBlank() } else null,
+            // Token 型源（Plex/AList）：这次没改就沿用旧的，别传 null 把凭据清掉
+            token = if (needToken) token.takeIf { it.isNotBlank() } ?: initial?.token else null,
             extraHeaders = hdrs,
             useProxy = useProxy,
             proxyUrl = if (useProxy) proxyUrl.takeIf { it.isNotBlank() } else null,
@@ -316,9 +333,16 @@ private fun SourceForm(
         )
     }
 
-    /** 密码单独传（不落库，走 EncryptedSharedPreferences）；留空 = 沿用原密码 */
-    fun buildPassword(): String? =
-        if (needUserPass) password.takeIf { it.isNotBlank() } else null
+    /**
+     * 密码单独传（不落库，走 EncryptedSharedPreferences）；留空 = 沿用原密码。
+     * ⚠️ savedSecret 兜底不能少：编辑场景下密码框本来就一直是空的，
+     *    少了这一句，任何一次「改个名字再保存」都会把登录凭据冲掉。
+     */
+    fun buildPassword(): String? = when {
+        !needUserPass -> null
+        password.isNotBlank() -> password
+        else -> savedSecret
+    }
 
     fun feedback(r: Result<Unit>, okText: String) {
         testMsg = if (r.isSuccess) {
@@ -448,12 +472,46 @@ private fun SourceForm(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     CircularProgressIndicator(Modifier.size(16.dp), color = Ember, strokeWidth = 2.dp)
-                    Text(if (testing) "正在连接…" else "正在保存…", color = TextMid, fontSize = 12.sp)
+                    Text(
+                        if (diagnosing) "诊断中…" else if (testing) "正在连接…" else "正在保存…",
+                        color = TextMid, fontSize = 12.sp
+                    )
                 }
                 testMsg?.let {
                     Text(it,
                         color = if (it.startsWith("✓")) Color(0xFF4CD964) else Color(0xFFFF6B6B),
                         fontSize = 12.sp, lineHeight = 17.sp)
+                }
+
+                // ---- 诊断结果：六步逐条列出来，失败在哪一步直接看得到 ----
+                diag?.let { steps ->
+                    Spacer(Modifier.height(2.dp))
+                    Text("诊断结果", color = TextHi, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF000000))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        steps.forEach { st ->
+                            Row(Modifier.fillMaxWidth()) {
+                                Text(
+                                    if (st.ok) "✓" else "✗",
+                                    color = if (st.ok) Color(0xFF4CD964) else Color(0xFFFF6B6B),
+                                    fontSize = 12.sp
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(st.title, color = TextHi, fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium)
+                                    Text(st.detail, color = TextMid, fontSize = 11.sp, lineHeight = 15.sp)
+                                }
+                                Text("${st.ms}ms", color = TextLow, fontSize = 10.sp)
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -474,7 +532,26 @@ private fun SourceForm(
                     }
                 ) { Text("测试连接", color = if (busy) TextLow else Ember) }
 
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(2.dp))
+                // 诊断：把一次连接拆成 6 步分别出结果，别再靠一句「网络错误」猜
+                TextButton(
+                    enabled = !busy && host.isNotBlank(),
+                    onClick = {
+                        testMsg = null
+                        diag = null
+                        diagnosing = true
+                        scope.launch {
+                            val steps = runCatching { Doctor.run(buildSource(), buildPassword()) }
+                                .getOrElse { t ->
+                                    listOf(DiagStep("诊断器异常", false, Http.describe(t), 0L))
+                                }
+                            diagnosing = false
+                            diag = steps
+                        }
+                    }
+                ) { Text("诊断", color = if (busy) TextLow else EmberSoft) }
+
+                Spacer(Modifier.width(2.dp))
                 Button(
                     enabled = !busy && host.isNotBlank(),
                     onClick = {
