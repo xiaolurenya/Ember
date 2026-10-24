@@ -153,13 +153,8 @@ fun EmberRoot() {
         composable(Routes.HOME) {
             HomeScreen(
                 repo = repo,
-                activeSource = activeSource,
-                onSwitchSource = { nav.navigate(Routes.SOURCES) },
-                onOpenSearch = { nav.navigate(Routes.SEARCH) },
-                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
-                onOpenDetail = { item -> nav.navigate(Routes.detail(item.id)) },
-                onOpenLibrary = { libId, name -> nav.navigate(Routes.library(libId, name)) },
-                onOpenSources = { nav.navigate(Routes.SOURCES) }
+                onOpenSourceManage = { nav.navigate(Routes.SOURCES) },
+                onPlayMedia = { mediaId -> nav.navigate(Routes.player(mediaId, 0)) }
             )
         }
 
