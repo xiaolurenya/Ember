@@ -225,7 +225,10 @@ private fun SourceForm(
     val scope = rememberCoroutineScope()
     var type by remember { mutableStateOf(initial?.type ?: SourceType.EMBY) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    var baseUrl by remember { mutableStateOf(initial?.baseUrl?.removePrefix("http://")?.removePrefix("https://") ?: "") }
+    // 地址和端口分开填（大哥要求的）：剥掉协议后按最后一个 : 拆
+    val strippedBase = initial?.baseUrl?.removePrefix("http://")?.removePrefix("https://") ?: ""
+    var host by remember { mutableStateOf(strippedBase.substringBeforeLast(':').ifBlank { strippedBase }) }
+    var port by remember { mutableStateOf(if (strippedBase.contains(':')) strippedBase.substringAfterLast(':') else "") }
     var https by remember { mutableStateOf(initial?.baseUrl?.startsWith("https") ?: false) }
     var username by remember { mutableStateOf(initial?.username ?: "") }
     var password by remember { mutableStateOf("") }
@@ -236,7 +239,6 @@ private fun SourceForm(
     var useProxy by remember { mutableStateOf(initial?.useProxy ?: false) }
     var proxyUrl by remember { mutableStateOf(initial?.proxyUrl ?: "") }
     var skipTls by remember { mutableStateOf(initial?.skipTlsVerify ?: false) }
-    var scanRoot by remember { mutableStateOf(initial?.scanRoot ?: "") }
     var locked by remember { mutableStateOf(initial?.locked ?: false) }
     var testing by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -248,12 +250,25 @@ private fun SourceForm(
     val busy = testing || saving
     val hasSavedSecret = initial?.secretRef != null
 
+    /** 该类型服务的默认端口（只作输入框占位提示，留空 = 不拼端口） */
+    val defaultPort = when (type) {
+        SourceType.EMBY, SourceType.JELLYFIN -> "8096"
+        SourceType.PLEX -> "32400"
+        SourceType.ALIST -> "5244"
+        SourceType.WEBDAV -> "5005"
+        SourceType.LOCAL -> null
+    }
+
     /** 表单 → MediaSource。⚠️ secretRef 必须透传，否则编辑保存后旧密码丢失 */
     fun buildSource(): MediaSource {
-        val cleanedBase = baseUrl.trim().trimEnd('/')
+        val cleanedHost = host.trim().trimEnd('/')
+        // 端口留空就不拼（用户可能用反代/默认端口）
         val fullBase = when (type) {
-            SourceType.LOCAL -> cleanedBase
-            else -> "${if (https) "https" else "http"}://$cleanedBase"
+            SourceType.LOCAL -> cleanedHost
+            else -> {
+                val p = port.trim()
+                "${if (https) "https" else "http"}://$cleanedHost" + if (p.isNotEmpty()) ":$p" else ""
+            }
         }
         val hdrs = extraHeaders.lineSequence()
             .mapNotNull { line ->
@@ -272,7 +287,8 @@ private fun SourceForm(
             useProxy = useProxy,
             proxyUrl = if (useProxy) proxyUrl.takeIf { it.isNotBlank() } else null,
             skipTlsVerify = skipTls,
-            scanRoot = if (type == SourceType.LOCAL) scanRoot.ifBlank { "/storage/emulated/0" } else null,
+            // 本地目录：路径同时写进 baseUrl 和 scanRoot（LocalAdapter 读 scanRoot）
+            scanRoot = if (type == SourceType.LOCAL) cleanedHost.ifBlank { "/storage/emulated/0" } else null,
             locked = locked,
             secretRef = initial?.secretRef
         )
@@ -311,15 +327,30 @@ private fun SourceForm(
                     label = { Text("显示名称") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true
                 )
-                OutlinedTextField(
-                    value = baseUrl, onValueChange = { baseUrl = it },
-                    label = { Text(if (type == SourceType.LOCAL) "本地根目录" else "服务器地址") },
-                    placeholder = { Text(
-                        if (type == SourceType.LOCAL) "/storage/emulated/0/Movies"
-                        else "192.168.1.100:8096"
-                    ) },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
+                // 地址 + 端口分开填
+                if (type == SourceType.LOCAL) {
+                    OutlinedTextField(
+                        value = host, onValueChange = { host = it },
+                        label = { Text("本地根目录") },
+                        placeholder = { Text("/storage/emulated/0/Movies") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true
+                    )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = host, onValueChange = { host = it },
+                            label = { Text("服务器地址（IP 或域名）") },
+                            placeholder = { Text("192.168.2.225") },
+                            modifier = Modifier.weight(1f), singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = port, onValueChange = { port = it.filter { c -> c.isDigit() } },
+                            label = { Text("端口") },
+                            placeholder = { Text(defaultPort ?: "") },
+                            modifier = Modifier.width(110.dp), singleLine = true
+                        )
+                    }
+                }
                 if (type != SourceType.LOCAL) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = https, onCheckedChange = { https = it })
@@ -352,13 +383,6 @@ private fun SourceForm(
                         ) },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(), singleLine = true
-                    )
-                }
-                if (type == SourceType.LOCAL) {
-                    OutlinedTextField(
-                        value = scanRoot, onValueChange = { scanRoot = it },
-                        label = { Text("扫描根目录（默认 /storage/emulated/0）") },
                         modifier = Modifier.fillMaxWidth(), singleLine = true
                     )
                 }
@@ -410,7 +434,7 @@ private fun SourceForm(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 测试连接：先探活再保存，避免「点了没反应」
                 TextButton(
-                    enabled = !busy && baseUrl.isNotBlank(),
+                    enabled = !busy && host.isNotBlank(),
                     onClick = {
                         testMsg = null
                         testing = true
@@ -425,7 +449,7 @@ private fun SourceForm(
 
                 Spacer(Modifier.width(4.dp))
                 Button(
-                    enabled = !busy && baseUrl.isNotBlank(),
+                    enabled = !busy && host.isNotBlank(),
                     onClick = {
                         testMsg = null
                         saving = true
