@@ -495,13 +495,16 @@ class MpvEngine(
             override fun eventProperty(property: String, value: Double) {}
             override fun eventProperty(property: String, value: MPVNode) {}
             override fun event(eventId: Int, data: MPVNode) {
-                // MPV_EVENT_END_FILE = 7；data 里 reason: 0=EOF 2=STOP 3=QUIT 4=REDIRECT 5=ERROR
+                // MPV_EVENT_END_FILE = 7；mpv_end_file_reason: 0=EOF 2=STOP 3=QUIT 4=ERROR 5=REDIRECT
+                // ⚠️ 加载失败（如 Emby 500 / 网络中断）reason 是 4 不是 5 —— 写错会导致
+                //    失败后 UI 永远停在「正在缓冲」（实测踩坑）。
                 if (eventId == 7) {
                     val reason = data?.get("reason")?.asInt() ?: -1L
-                    if (reason == 5L) {
-                        val err = data?.get("file_error")?.asString() ?: "播放中断"
-                        Log.e(TAG, "playback error (end-file reason=5): $err")
-                        _state.value = _state.value.copy(error = err, buffering = false)
+                    if (reason == 4L) {
+                        val err = data?.get("file_error")?.asString()?.takeIf { it.isNotBlank() }
+                            ?: "播放加载失败（源不可用或网络中断）"
+                        Log.e(TAG, "playback error (end-file reason=4): $err")
+                        _state.value = _state.value.copy(error = err, buffering = false, loaded = false)
                     }
                 }
             }
