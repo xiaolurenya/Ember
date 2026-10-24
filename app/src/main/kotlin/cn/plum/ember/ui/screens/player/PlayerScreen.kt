@@ -337,7 +337,8 @@ fun PlayerScreen(
         if (showSkipIntro || showSkipCredits) {
             Row(
                 Modifier.align(Alignment.BottomEnd)
-                    .padding(end = if (tv) 40.dp else 24.dp, bottom = if (tv) 120.dp else 96.dp),
+                    // 底部控制条现在有两行（播放行 + 工具行），跳过卡片要再抬高避免压住工具行
+                    .padding(end = if (tv) 40.dp else 24.dp, bottom = if (tv) 160.dp else 130.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (showSkipIntro) {
