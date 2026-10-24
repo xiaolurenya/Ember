@@ -136,13 +136,21 @@ fun PlayerScreen(
     // 解析失败（区别于 mpv 播放错误的 state.error）：必须显示出来，之前只打 logcat 用户什么都看不到
     var loadError by remember { mutableStateOf<String?>(null) }
 
-    // ---- 内核初始化 + 详情 + 加载（⚠️ 必须顺序：先拉详情补 positionSec，
-    //      再解析播放地址，否则记忆续播位置丢失（竞态实测踩坑））----
+    // ---- 起播（⚠️ 元数据与播放彻底解耦，CapyPlayer 思路：元信息类请求绝不串行阻塞起播）----
+    //  ① 本地进度先垫上（Room 同步读，1 毫秒级），保证记忆续播+不误跳片头
+    //  ② detail（封面/演职/集数/刮削数据）异步补，不影响 loadfile
     LaunchedEffect(itemId) {
         engine.start()
-        try {
-            repo.detail(source?.id ?: "", itemId)?.let { item = it }
-        } catch (_: Throwable) {}
+        runCatching {
+            val localPos = App.db.progressOf(source?.id ?: "", itemId)?.positionSec ?: 0L
+            if (localPos > 0) item = item.copy(positionSec = localPos)
+        }
+        scope.launch {
+            try { repo.detail(source?.id ?: "", itemId)?.let { d ->
+                // 服务器有更新进度就用服务器的，否则保留本地
+                item = if (d.positionSec > 0) d else d.copy(positionSec = item.positionSec)
+            } } catch (_: Throwable) {}
+        }
         val r = repo.playable(source?.id ?: "", item, versionIndex)
         if (r.isSuccess) {
             loadError = null
@@ -492,28 +500,7 @@ fun PlayerScreen(
                                 Text(meta, color = Color(0xBBFFFFFF), fontSize = 11.sp)
                             }
                         }
-                        IconButton(onClick = { panelMode = if (panelMode == "audio") null else "audio" }) {
-                            Icon(Icons.Default.Tune, contentDescription = "音轨", tint = Color.White)
-                        }
-                        IconButton(onClick = { panelMode = if (panelMode == "sub") null else "sub" }) {
-                            Icon(Icons.Default.Subtitles, contentDescription = "字幕", tint = Color.White)
-                        }
-                        IconButton(onClick = { panelMode = if (panelMode == "speed") null else "speed" }) {
-                            Icon(Icons.Default.Speed, contentDescription = "倍速", tint = Color.White)
-                        }
-                        IconButton(onClick = { panelMode = if (panelMode == "aspect") null else "aspect" }) {
-                            Icon(Icons.Default.AspectRatio, contentDescription = "画面比例", tint = Color.White)
-                        }
-                        if (episodes.isNotEmpty()) {
-                            Box(
-                                Modifier.tvFocus(1.05f) {
-                                    panelMode = if (panelMode == "episode") null else "episode"
-                                }
-                                .padding(10.dp)
-                            ) {
-                                Text("选集", color = EmberSoft, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
+                        Spacer(Modifier.width(12.dp))
                     }
                 }
 
@@ -606,6 +593,24 @@ fun PlayerScreen(
                                 }
                             }
                         }
+
+                        // ---- ⭐ 工具按钮行（音轨 / 字幕 / 倍速 / 画面比例 / 选集）----
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = if (tv) 6.dp else 2.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ToolChip("音轨", active = panelMode == "audio") { panelMode = if (panelMode == "audio") null else "audio" }
+                            ToolChip("字幕", active = panelMode == "sub") { panelMode = if (panelMode == "sub") null else "sub" }
+                            ToolChip("倍速", active = panelMode == "speed") { panelMode = if (panelMode == "speed") null else "speed" }
+                            ToolChip("画面", active = panelMode == "aspect") { panelMode = if (panelMode == "aspect") null else "aspect" }
+                            ToolChip(String.format("%.1fx", state.speed), active = false) {
+                                panelMode = if (panelMode == "speed") null else "speed"
+                            }
+                            if (episodes.isNotEmpty()) {
+                                ToolChip("选集", active = panelMode == "episode") { panelMode = if (panelMode == "episode") null else "episode" }
+                            }
+                        }
                     }
                 }
             }
@@ -663,6 +668,25 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+/** 底部工具按钮（统一烟熏玻璃感 + 点击/聚焦放大反馈，避免「点了没反应」的观感） */
+@Composable
+private fun ToolChip(label: String, active: Boolean, onClick: () -> Unit) {
+    val tv = isTv()
+    Box(
+        Modifier
+            .padding(horizontal = if (tv) 7.dp else 5.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) Ember.copy(alpha = 0.22f) else Color(0x22FFFFFF))
+            .tvFocus(1.06f, EmberSoft, cornerRadius = 999.dp) { onClick() }
+            .padding(horizontal = if (tv) 16.dp else 12.dp, vertical = if (tv) 9.dp else 7.dp)
+    ) {
+        Text(
+            label, fontSize = if (tv) 14.sp else 13.sp, fontWeight = FontWeight.Medium,
+            color = if (active) EmberSoft else Color.White
+        )
     }
 }
 
