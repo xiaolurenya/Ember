@@ -1,8 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标前景 v2：一枚火苗（外焰深橙 + 内焰亮金），
-  播放三角用 evenOdd 挖空 —— 洞里透出的是 background 层的深炭色。
-  只有两个元素、一个整体，小尺寸下依然清晰。
+  自适应图标前景：一枚火苗（外焰深橙 + 内焰亮金），播放三角用 evenOdd 挖空，
+  洞里透出 background 层的深炭色。
+
+  ⚠️ 居中口径（v1.1.3，别再凭感觉调坐标，改之前先跑 _gen_icon2.py 看数值）：
+    外焰的**面积质心**在 (54.000, 58.586)（不是包围盒中心 54.05 —— 火苗下半部是
+    半圆球，质量压在下面，质心比几何中心低 4.5）。
+    判据：**外焰质心 = 内焰质心 = 三角质心** 三点同心。
+      · 内焰 = 外焰以 (54, 58.586) 为原点缩放 0.55 → 质心天然与外焰重合
+      · 三角质心 = (54, 58.586) → 指右三角的质心在 x0+w/3，所以 x0 = 54 - w/3 = 51
+        （这正是播放键的经典光学居中：包围盒偏右一点，看起来才居中）
+    实测四周间距：到外焰轮廓 9.97 / 11.33 / 11.72（极差 1.75，改之前是 4.7）
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
@@ -19,12 +27,12 @@
             A17.5,17.5 0 0,0 71.5,59.5
             C71.5,46.5 54,41.8 54,31.1
             Z
-            M49.6,56.7 L58.4,62.4 L49.6,68.2 Z">
+            M51,52.74 L60,58.59 L51,64.44 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
                 android:startX="54"
-                android:startY="31"
+                android:startY="31.1"
                 android:endX="54"
                 android:endY="77">
                 <item android:color="#FFFFB85C" android:offset="0.0" />
@@ -34,22 +42,22 @@
         </aapt:attr>
     </path>
 
-    <!-- 内焰：更亮的一层，底部对齐外焰下部 -->
+    <!-- 内焰：外焰 ×0.55 的同心缩放，同样挖掉三角 -->
     <path
         android:fillType="evenOdd"
-        android:pathData="M54,46.2
-            C54,53.3 45.1,53.9 45.1,62.4
-            A8.9,8.9 0 0,0 62.9,62.4
-            C62.9,53.9 54,53.3 54,46.2
+        android:pathData="M54,43.47
+            C54,49.35 44.38,51.94 44.38,59.09
+            A9.625,9.625 0 0,0 63.62,59.09
+            C63.62,51.94 54,49.35 54,43.47
             Z
-            M49.6,56.7 L58.4,62.4 L49.6,68.2 Z">
+            M51,52.74 L60,58.59 L51,64.44 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
                 android:startX="54"
-                android:startY="46"
+                android:startY="43.47"
                 android:endX="54"
-                android:endY="71">
+                android:endY="68.71">
                 <item android:color="#FFFFE9BC" android:offset="0.0" />
                 <item android:color="#FFFFC24A" android:offset="0.5" />
                 <item android:color="#FFFF8A2B" android:offset="1.0" />
