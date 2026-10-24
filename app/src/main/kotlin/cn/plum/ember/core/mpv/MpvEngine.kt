@@ -1,6 +1,7 @@
 package cn.plum.ember.core.mpv
 
 import android.content.Context
+import android.util.Log
 import android.view.Surface
 import cn.plum.ember.data.PlayerSettings
 import cn.plum.ember.data.Playable
@@ -11,7 +12,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,8 +55,12 @@ data class PlayerUiState(
  * 关键约定：
  *  1. 每个播放会话一个 MPV 实例，会话结束彻底销毁（避免长会话内存膨胀）。
  *  2. 所有网络相关 option 在 nativeCreate() 之后 nativeInit() 之前下发才生效。
- *  3. 视频 Surface 由 Compose 的 AndroidView 挂上来，attachSurface 前后都要处理 detach。
- *  4. token 失效的自动续播由上层（PlayerViewModel）监听 error / finished 事件重新走 resolver。
+ *  3. 视频 Surface 由 Compose 的 AndroidView 挂上来，**loadfile 必须在 surface 绑定之后**下发，
+ *     否则 mpv 在空 surface 上起播、surface 后到时部分机型/模拟器不会自动补渲染 → 黑屏。
+ *     本类用 pendingLoad 机制：load() 在 surface 就绪前只暂存，attachSurface 后补 loadfile。
+ *  4. 所有请求头（UA/Referer/Cookie/自定义头）统一经 http-header-fields 下发，
+ *     保证 Emby 的 api_key 之外若有 Cookie/Referer 也不漏（libmpv 自己跟跳转拿不到上游 Cookie）。
+ *  5. token 失效的自动续播由上层（PlayerScreen）监听 error / finished 事件重新走 resolver。
  */
 class MpvEngine(
     private val appCtx: Context,
@@ -64,8 +68,14 @@ class MpvEngine(
 ) {
     private var mpv: MPV? = null
     private var surface: Surface? = null
+    /** surface 是否已成功 bind 到 mpv（attachSurface 成功才置 true） */
+    @Volatile private var surfaceReady = false
+    /** mpv 实例是否已 init 完成 */
+    @Volatile private var started = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var currentPlayable: Playable? = null
+    /** surface 未就绪时暂存的待播资源，surface 一到立刻 loadfile */
+    private var pending: Playable? = null
     /** seek 期间不再回写 UI 位置，避免进度条抖动 */
     @Volatile private var seeking = false
 
@@ -74,6 +84,10 @@ class MpvEngine(
 
     /** 用户主动 seek / play 等操作发生的时间戳，用于自动隐藏控制条 */
     val lastInteraction = MutableStateFlow(0L)
+
+    companion object {
+        private const val TAG = "EmberMpv"
+    }
 
     // ===================== 生命周期 =====================
 
@@ -90,6 +104,8 @@ class MpvEngine(
             m.setOptionString("config", "no")
             m.setOptionString("vo", "gpu-next")
             m.setOptionString("gpu-context", "android")
+            // 软解兜底：auto-safe 在硬解不可用时自动退回软件解码，
+            // 模拟器 / 老旧芯片不会因为拿不到硬件解码器而直接黑屏。
             m.setOptionString("hwdec", if (settings.hwdec) "auto-safe" else "no")
             m.setOptionString("cache", "auto")
             m.setOptionString("cache-secs", settings.cacheSecs.toString())
@@ -134,9 +150,24 @@ class MpvEngine(
             m.observeProperty("cache-buffering-state", MPV_FORMAT_INT64)
 
             mpv = m
+            started = true
             subscribeFlows(m)
+
+            // start 完成时若 surface 早已创建（先到），这里补绑定
+            surface?.let { s ->
+                if (s.isValid) {
+                    try { m.attachSurface(s); surfaceReady = true } catch (t: Throwable) {
+                        Log.w(TAG, "attachSurface on start failed: ${t.message}")
+                    }
+                }
+            }
+            // 若 start 之前就有暂存的待播，此刻 surface 已绑，直接补 loadfile
+            flushPending()
+
+            Log.i(TAG, "mpv started (hwdec=${settings.hwdec})")
             true
         } catch (t: Throwable) {
+            Log.e(TAG, "mpv init failed: ${t.message}", t)
             _state.value = _state.value.copy(error = "内核初始化失败：${t.message ?: "未知错误"}")
             false
         }
@@ -144,25 +175,49 @@ class MpvEngine(
 
     fun attachSurface(s: Surface?) {
         surface = s
-        val m = mpv ?: return
+        val m = mpv ?: return   // 内核还没起，先存着，start() 结束会补绑
         try {
-            if (s != null && s.isValid) m.attachSurface(s)
-            else m.detachSurface()
-        } catch (t: Throwable) { /* 释放竞态时可能已经 destroy，忽略 */ }
+            if (s != null && s.isValid) {
+                m.attachSurface(s)
+                surfaceReady = true
+                Log.i(TAG, "surface attached")
+                // surface 一到，把暂存的待播补上
+                flushPending()
+            } else {
+                m.detachSurface()
+                surfaceReady = false
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "attachSurface failed: ${t.message}")
+        }
+    }
+
+    /** surface 就绪后补 loadfile（pending 或普通 load 暂存的资源） */
+    private fun flushPending() {
+        val p = pending ?: return
+        pending = null
+        if (surfaceReady && started) {
+            Log.i(TAG, "flush pending load: ${p.url.take(80)}")
+            doLoad(p, p.startSec)
+        }
     }
 
     fun stop() {
         val m = mpv ?: return
         try { m.command("stop") } catch (_: Throwable) {}
         currentPlayable = null
+        pending = null
     }
 
     fun destroy() {
-        val m = mpv ?: return
+        val m = mpv ?: run { scope.cancel(); return }
         try { m.detachSurface() } catch (_: Throwable) {}
         try { m.destroy() } catch (_: Throwable) {}   // destroySession() + nativeDestroy()
         mpv = null
         surface = null
+        surfaceReady = false
+        started = false
+        pending = null
         scope.cancel()
     }
 
@@ -170,43 +225,62 @@ class MpvEngine(
 
     /**
      * 加载一个 Playable。
+     * ⚠️ 若 surface 尚未绑定，先暂存，等 attachSurface 后再真正 loadfile —— 这是修复黑屏的关键。
      * @param resumeSec 起播位置（覆盖 Playable.startSec）
      */
     suspend fun load(p: Playable, resumeSec: Long = -1L): Boolean = withContext(Dispatchers.Main) {
-        val m = mpv ?: return@withContext false
         currentPlayable = p
         _state.value = _state.value.copy(
             loaded = false, playing = false, buffering = true,
             positionSec = 0.0, durationSec = 0.0, finished = false, error = null
         )
+        if (!started) {
+            // 内核都还没起，等 start() 完成后再说
+            pending = p
+            Log.i(TAG, "load deferred: engine not started yet")
+            return@withContext true
+        }
+        if (!surfaceReady) {
+            // surface 未到：暂存，attachSurface 后 flushPending() 补 loadfile
+            pending = p
+            Log.i(TAG, "load deferred: surface not ready yet")
+            return@withContext true
+        }
+        doLoad(p, if (resumeSec >= 0) resumeSec else p.startSec)
+    }
 
-        // ---- 头部：UA / Referer / Cookie 通过 mpv 属性下发 ----
+    /** 真正下发 loadfile（调用方需保证 surface 已就绪） */
+    private fun doLoad(p: Playable, startSec: Long): Boolean {
+        val m = mpv ?: return false
         val headers = p.headers
-        val cookie = headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value
-        val ua = headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value
-        val referer = headers.entries.firstOrNull { it.key.equals("Referer", true) }?.value
 
+        // ---- 头部：UA 单独走 user-agent 属性；其余（Referer/Cookie/自定义头）走 http-header-fields ----
+        val ua = headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value
+        val headerFields = mutableListOf<String>()
+        headers.forEach { (k, v) ->
+            if (!k.equals("User-Agent", true)) headerFields += "$k: $v"
+        }
         try {
             if (!ua.isNullOrBlank()) m.setPropertyString("user-agent", ua)
-            if (!referer.isNullOrBlank()) m.setPropertyString("referrer", referer)
-            if (!cookie.isNullOrBlank()) {
-                m.setPropertyNode("http-header-fields",
-                    MPVNode.ArrayNode(arrayOf(MPVNode.StringNode("Cookie: $cookie"))))
-            } else {
-                m.setPropertyNode("http-header-fields", MPVNode.ArrayNode(emptyArray()))
-            }
-        } catch (t: Throwable) { /* 属性下发失败不阻塞加载 */ }
+            m.setPropertyNode(
+                "http-header-fields",
+                MPVNode.ArrayNode(headerFields.map { MPVNode.StringNode(it) }.toTypedArray())
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "set headers failed: ${t.message}")
+        }
 
         // ---- loadfile：start 选项传起始位置 ----
-        val start = if (resumeSec >= 0) resumeSec else p.startSec
-        try {
-            if (start > 5) {
-                m.command("loadfile", p.url, "replace", "start=+$start")
+        return try {
+            if (startSec > 5) {
+                m.command("loadfile", p.url, "replace", "start=+$startSec")
             } else {
                 m.command("loadfile", p.url, "replace")
             }
+            Log.i(TAG, "loadfile issued: ${p.url.take(120)} (start=$startSec)")
             true
         } catch (t: Throwable) {
+            Log.e(TAG, "loadfile failed: ${t.message}", t)
             _state.value = _state.value.copy(error = "无法加载：${t.message ?: "格式不支持"}")
             false
         }
@@ -403,7 +477,8 @@ class MpvEngine(
                     val reason = data?.get("reason")?.asInt() ?: -1L
                     if (reason == 5L) {
                         val err = data?.get("file_error")?.asString() ?: "播放中断"
-                        _state.value = _state.value.copy(error = err)
+                        Log.e(TAG, "playback error (end-file reason=5): $err")
+                        _state.value = _state.value.copy(error = err, buffering = false)
                     }
                 }
             }
@@ -414,6 +489,7 @@ class MpvEngine(
     private fun onFileLoaded() {
         seeking = false
         _state.value = _state.value.copy(loaded = true, buffering = false, finished = false)
+        Log.i(TAG, "file-loaded: loaded=true")
         // mpv 的 loadfile 带 start=+N 时部分版本不触发 seek 事件，这里主动校正一次 UI 位置
         val m = mpv ?: return
         val pos = m.getPropertyDouble("time-pos") ?: 0.0
