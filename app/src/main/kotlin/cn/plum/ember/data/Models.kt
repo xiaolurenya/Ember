@@ -52,6 +52,19 @@ data class Library(
     val image: String? = null
 )
 
+/** 章节（mpv/Emby 的 chapter-list，跳片头片尾也用它） */
+data class Chapter(
+    val name: String,
+    val startSec: Long
+)
+
+/** 演职人员 */
+data class Person(
+    val name: String,
+    val role: String? = null,
+    val image: String? = null
+)
+
 /** 单条媒体（电影/剧集/剧集中的一集/本地文件统一用这个） */
 data class MediaItem(
     val id: String,
@@ -61,12 +74,22 @@ data class MediaItem(
     val kind: String = "movie",
     val title: String = "",
     val subtitle: String? = null,          // 剧集的 "S01E02 · 集名"
+    /** 原名/外文名（详情页副标题） */
+    val originalTitle: String? = null,
+    /** 宣传语（详情页可显示在原名下） */
+    val tagline: String? = null,
     val overview: String? = null,
     val year: Int? = null,
+    /** 首映日期（yyyy-MM-dd 或 ISO） */
+    val premiereDate: String? = null,
     val rating: Double? = null,
+    /** 分级（PG-13 / R / _PG 13 等，原样显示） */
+    val officialRating: String? = null,
     val durationSec: Long = 0L,
     /** 已看进度（秒），本地记录；Emby 源会优先用服务器端的 */
     val positionSec: Long = 0L,
+    /** 服务器端标记已看 */
+    val watched: Boolean = false,
     /** "movie" 场景下：4K/1080P 等多版本 */
     val versions: List<MediaVersion> = emptyList(),
     /** 剧集：这一季的集 */
@@ -75,6 +98,19 @@ data class MediaItem(
     val cast: List<String> = emptyList(),
     val poster: String? = null,
     val backdrop: String? = null,
+    /** 剧照（Backdrops 除第一张外的横图，详情页相册用） */
+    val stills: List<String> = emptyList(),
+    /** 章节 */
+    val chapters: List<Chapter> = emptyList(),
+    /** 演职人员（含角色名） */
+    val people: List<Person> = emptyList(),
+    /** 制作公司 */
+    val studios: List<String> = emptyList(),
+    /** 外部 ID：Imdb/Tmdb（拼外部链接用） */
+    val providerImdb: String? = null,
+    val providerTmdb: String? = null,
+    /** 媒体规格面板行（如 "HEVC · 3840×2160 · DOVI"，详情页右侧悬浮面板） */
+    val mediaSpec: List<String> = emptyList(),
     val container: String? = null,         // mkv/mp4/iso...
     val path: String? = null,              // 原始路径（识别 .strm / .iso 用）
     val strmUrl: String? = null,           // .strm 文件解析出的直链
