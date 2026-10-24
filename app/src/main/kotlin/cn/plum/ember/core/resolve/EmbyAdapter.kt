@@ -591,7 +591,8 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
             } else null,
             overview = j.get("Overview")?.asString,
             originalTitle = j.get("OriginalTitle")?.takeIf { it.isJsonPrimitive }?.asString,
-            tagline = j.get("Taglines")?.asArray?.firstOrNull()?.takeIf { it.isJsonPrimitive }?.asString,
+            tagline = j.get("Taglines")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.firstOrNull()?.takeIf { it.isJsonPrimitive }?.asString,
             premiereDate = j.get("PremiereDate")?.takeIf { it.isJsonPrimitive }?.asString?.take(10),
             officialRating = j.get("OfficialRating")?.takeIf { it.isJsonPrimitive }?.asString,
             watched = userData?.get("Played")?.asBoolean == true,
