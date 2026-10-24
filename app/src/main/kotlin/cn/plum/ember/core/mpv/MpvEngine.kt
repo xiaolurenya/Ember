@@ -89,7 +89,8 @@ class MpvEngine(
         if (targetSec <= 5) return
         val m = mpv ?: return
         Log.e(TAG, "deferredSeek scheduled: $targetSec")
-        scope.launch {
+        // ⚠️ 轮询走 Default：time-pos 读取是 JNI 调用，缓冲期间会阻塞主线程（见 mpvAsync 说明）
+        scope.launch(Dispatchers.Default) {
             var tries = 0
             while (tries < 75) {
                 val pos = try { m.getPropertyDouble("time-pos") } catch (_: Throwable) { null }
@@ -330,41 +331,50 @@ class MpvEngine(
 
     // ===================== 控制 =====================
 
-    fun play() { mpv?.setPropertyBoolean("pause", false) }
-    fun pause() { mpv?.setPropertyBoolean("pause", true) }
-    fun togglePlay() {
+    /**
+     * ⚠️ 所有 mpv JNI 调用必须异步：mpv opening/缓冲期间 native 层持锁，
+     * 主线程直调 command/getProperty 会卡住 UI —— 表现为「按钮点击无反应」，
+     * 严重时主线程冻结被模拟器看门狗强杀（实测踩坑）。点击回调必须立即返回。
+     */
+    private fun mpvAsync(block: (MPV) -> Unit) {
         val m = mpv ?: return
-        val paused = m.getPropertyBoolean("pause") ?: false
-        m.setPropertyBoolean("pause", !paused)
+        scope.launch(Dispatchers.Default) {
+            try { block(m) } catch (t: Throwable) {
+                Log.w(TAG, "mpv control failed: ${t.message}")
+            }
+        }
+    }
+
+    fun play() { mpvAsync { it.setPropertyBoolean("pause", false) } }
+    fun pause() { mpvAsync { it.setPropertyBoolean("pause", true) } }
+    fun togglePlay() {
+        mpvAsync { m ->
+            val paused = m.getPropertyBoolean("pause") ?: false
+            m.setPropertyBoolean("pause", !paused)
+        }
         touch()
     }
     fun seekTo(sec: Double) {
-        val m = mpv ?: return
         val d = _state.value.durationSec
         val target = sec.coerceIn(0.0, if (d > 0) d - 0.5 else sec)
-        try {
-            m.command("seek", target.toString(), "absolute")
-            _state.value = _state.value.copy(positionSec = target)
-            touch()
-        } catch (_: Throwable) {}
-    }
-    fun seekBy(deltaSec: Double) {
-        val m = mpv ?: return
-        val pos = _state.value.positionSec + deltaSec
-        seekTo(pos)
-    }
-    fun setSpeed(f: Float) {
-        mpv?.setPropertyDouble("speed", f.toDouble())
+        mpvAsync { it.command("seek", target.toString(), "absolute") }
+        _state.value = _state.value.copy(positionSec = target)
         touch()
     }
-    fun setAudioTrack(id: Int) { mpv?.setPropertyInt("aid", id) }
-    fun setSubtitleTrack(id: Int) { mpv?.setPropertyInt("sid", id) }   // -1 = 关闭
-    fun setSubDelay(sec: Double) { mpv?.setPropertyDouble("sub-delay", sec) }
-    fun setHwdec(on: Boolean) { mpv?.setPropertyString("hwdec", if (on) "auto-safe" else "no") }
+    fun seekBy(deltaSec: Double) {
+        seekTo(_state.value.positionSec + deltaSec)
+    }
+    fun setSpeed(f: Float) {
+        mpvAsync { it.setPropertyDouble("speed", f.toDouble()) }
+        touch()
+    }
+    fun setAudioTrack(id: Int) { mpvAsync { it.setPropertyInt("aid", id) } }
+    fun setSubtitleTrack(id: Int) { mpvAsync { it.setPropertyInt("sid", id) } }   // -1 = 关闭
+    fun setSubDelay(sec: Double) { mpvAsync { it.setPropertyDouble("sub-delay", sec) } }
+    fun setHwdec(on: Boolean) { mpvAsync { it.setPropertyString("hwdec", if (on) "auto-safe" else "no") } }
 
     /** 画面比例：origin / fit / fill / stretch / 16:9 / 4:3 */
     fun setAspect(mode: String) {
-        val m = mpv ?: return
         val v = when (mode) {
             "origin" -> "-1"        // 跟随源
             "fit" -> "-1"           // Compose 层用 ContentScale 处理
@@ -375,20 +385,19 @@ class MpvEngine(
             "2.35:1" -> "2.35"
             else -> "-1"
         }
-        m.setPropertyString("video-aspect-override", v)
+        mpvAsync { it.setPropertyString("video-aspect-override", v) }
         touch()
     }
 
     /** 音频直通开关（HDR/杜比设备） */
     fun setPassthrough(on: Boolean) {
-        mpv?.setPropertyString("audio-spdif", if (on) "truehd,dts-hd,eac3,ac3,dts" else "")
+        mpvAsync { it.setPropertyString("audio-spdif", if (on) "truehd,dts-hd,eac3,ac3,dts" else "") }
     }
 
     fun chapterJump(delta: Int) {
-        val m = mpv ?: return
         val idx = _state.value.currentChapter + delta
         if (idx >= 0 && idx < _state.value.chapters.size) {
-            m.setPropertyInt("chapter", idx)
+            mpvAsync { it.setPropertyInt("chapter", idx) }
             touch()
         }
     }
