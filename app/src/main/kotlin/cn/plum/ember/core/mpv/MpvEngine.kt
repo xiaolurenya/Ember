@@ -85,10 +85,6 @@ class MpvEngine(
     /** 用户主动 seek / play 等操作发生的时间戳，用于自动隐藏控制条 */
     val lastInteraction = MutableStateFlow(0L)
 
-    companion object {
-        private const val TAG = "EmberMpv"
-    }
-
     // ===================== 生命周期 =====================
 
     suspend fun start(): Boolean = withContext(Dispatchers.Main) {
@@ -545,6 +541,8 @@ class MpvEngine(
     }
 
     companion object {
+        private const val TAG = "EmberMpv"
+
         // mpv_format 常量（从 is.xyz.mpv.MPV 拷出来，避免依赖内部对象）
         const val MPV_FORMAT_NONE: Int = 0
         const val MPV_FORMAT_STRING: Int = 1
