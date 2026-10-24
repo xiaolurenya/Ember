@@ -57,6 +57,8 @@ data class PlayerSettings(
 )
 
 class Prefs(private val ctx: Context) {
+    /** 应用上下文（App 单例建播放内核用） */
+    val appCtx: Context get() = ctx.applicationContext
     private object K {
         val hwdec = booleanPreferencesKey("hwdec")
         val cacheSecs = intPreferencesKey("cache_secs")
