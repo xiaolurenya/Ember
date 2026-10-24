@@ -154,6 +154,22 @@ fun PlayerScreen(
         }
     }
 
+    // ---- mpv 加载失败自动重试一次 ----
+    // Emby /Download 对 strm 偶发瞬时 500（实测：115 上游抖动），失败后 2 秒自动重拉直链；
+    // 再失败才交给错误页（state.error / loadError）手动重试。
+    var autoRetried by remember { mutableStateOf(false) }
+    LaunchedEffect(state.error) {
+        if (state.error == null || autoRetried) return@LaunchedEffect
+        autoRetried = true
+        delay(2000)
+        if (state.error == null) return@LaunchedEffect   // 期间已恢复
+        android.util.Log.e("Ember", "mpv 加载失败，自动重试一次")
+        loadError = null
+        val r = repo.playable(source?.id ?: "", item, versionIndex)
+        if (r.isSuccess) engine.load(r.getOrThrow(), resumeSec = state.positionSec.toLong())
+        else loadError = r.exceptionOrNull()?.message ?: "未知错误"
+    }
+
     // ---- 记忆播放：自动跳过片头（起播位置在片头范围内时一次性 seek）----
     // ⚠️ 1) 有续播位置时不跳（续播优先）；2) file-loaded 瞬间 durationSec 往往还是 0，等就绪；
     //    3) seek 必须走 deferredSeek（太早发会被 mpv 忽略，实测踩坑）
