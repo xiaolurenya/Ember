@@ -138,16 +138,20 @@ fun PlayerScreen(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var panelMode by remember { mutableStateOf<String?>(null) }  // audio / sub / speed / episode / aspect
+    // 解析失败（区别于 mpv 播放错误的 state.error）：必须显示出来，之前只打 logcat 用户什么都看不到
+    var loadError by remember { mutableStateOf<String?>(null) }
 
     // ---- 内核初始化 + 加载（load 内部会等 surface 就绪）----
     LaunchedEffect(itemId) {
         engine.start()
         val r = repo.playable(source?.id ?: "", item, versionIndex)
         if (r.isSuccess) {
+            loadError = null
             engine.load(r.getOrThrow())
         } else {
             val msg = r.exceptionOrNull()?.message ?: "未知错误"
             android.util.Log.e("Ember", "起播失败：$msg")
+            loadError = msg
         }
     }
 
@@ -232,7 +236,7 @@ fun PlayerScreen(
         )
 
         // ---- 加载 / 缓冲指示 ----
-        if (state.buffering && !state.loaded && state.error == null) {
+        if (state.buffering && !state.loaded && state.error == null && loadError == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(
@@ -284,8 +288,8 @@ fun PlayerScreen(
             }
         }
 
-        // ---- 错误页（保留重试 + 返回）----
-        state.error?.let { err ->
+        // ---- 错误页（解析失败 loadError / mpv 播放错误 state.error，保留重试 + 返回）----
+        (state.error ?: loadError)?.let { err ->
             Box(Modifier.fillMaxSize().background(Color(0xEE000000)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                     Text("⚠", color = Color(0xFFFF5555), fontSize = 60.sp)
@@ -299,8 +303,13 @@ fun PlayerScreen(
                                 .padding(horizontal = 30.dp, vertical = 12.dp)
                                 .tvFocus(1.06f) {
                                     scope.launch {
+                                        loadError = null
                                         val r = repo.playable(source?.id ?: "", item, versionIndex)
-                                        if (r.isSuccess) engine.load(r.getOrThrow(), resumeSec = state.positionSec.toLong())
+                                        if (r.isSuccess) {
+                                            engine.load(r.getOrThrow(), resumeSec = state.positionSec.toLong())
+                                        } else {
+                                            loadError = r.exceptionOrNull()?.message ?: "未知错误"
+                                        }
                                     }
                                 }
                         ) { Text("重试", color = Color(0xFF1A0E04), fontWeight = FontWeight.SemiBold) }
@@ -387,7 +396,7 @@ fun PlayerScreen(
 
         // ---- 控制条（上下渐变遮罩 + 控件）----
         AnimatedVisibility(
-            visible = controlsVisible && state.error == null,
+            visible = controlsVisible && state.error == null && loadError == null,
             enter = fadeIn(), exit = fadeOut()
         ) {
             Column(Modifier.fillMaxSize()) {
