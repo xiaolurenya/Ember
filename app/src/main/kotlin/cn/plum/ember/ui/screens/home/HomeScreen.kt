@@ -2,11 +2,11 @@ package cn.plum.ember.ui.screens.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,137 +15,142 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.plum.ember.data.LibraryRepo
+import cn.plum.ember.data.MediaItem
+import cn.plum.ember.data.MediaSource
 import cn.plum.ember.ui.theme.Ember
 import cn.plum.ember.ui.theme.Ink
 import cn.plum.ember.ui.theme.InkRaised
 import cn.plum.ember.ui.theme.TextHi
 import cn.plum.ember.ui.theme.TextLow
 import cn.plum.ember.ui.theme.TextMid
+import cn.plum.ember.ui.widgets.EmptyState
+import cn.plum.ember.ui.widgets.PosterCard
+import cn.plum.ember.ui.widgets.PosterSkeleton
+import cn.plum.ember.ui.widgets.WideCard
 import cn.plum.ember.ui.widgets.tvFocus
-import kotlinx.coroutines.delay
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 /**
- * TV端黑金霓虹影视首页
- * 对接Emby/strm‑302；卡片点击回调mediaId，上层组装302中转url播放strm资源
+ * TV / 手机共用影视首页。
  *
- * ⚠️ repo 当前为预留参数：真实首页数据（Banner/栏目）后续由 repo 拉取 Emby 元数据填入，
- *    见文件底部「对接逻辑」。未接数据时栏目为空，会自动显示占位卡片。
+ * 真实数据由 repo 拉取：继续观看（resume）→ 最近添加（latest）→ 各媒体库条目。
+ * 顶栏品牌名来自当前已添加的媒体源名称（动态），不再硬编码。
+ * 卡片点击：电影/单集直接起播，剧集/合集进详情页选集。
  */
-data class HomeBannerItem(
-    val id: String,
-    val title: String,
-    val subTitle: String,
-    val tags: List<String>,
-    val desc: String,
-    val imageUrl: String
-)
-
-data class HomeMediaCard(
-    val mediaId: String,
-    val title: String,
-    val coverUrl: String
-)
-
 data class HomeSection(
-    val sectionTitle: String,
-    val items: List<HomeMediaCard>
+    val key: String,
+    val title: String,
+    val items: List<MediaItem>,
+    val wide: Boolean = false
 )
 
 @Composable
 fun HomeScreen(
     repo: LibraryRepo,
-    onOpenSourceManage: () -> Unit, // 跳转 SourcesScreen 媒体源管理
-    onPlayMedia: (mediaId: String) -> Unit // 点击卡片/Banner，回调mediaId，上层拼接302 strm链接播放
+    source: MediaSource?,
+    onOpenSourceManage: () -> Unit,
+    onPlayMedia: (mediaId: String) -> Unit,
+    onOpenDetail: (MediaItem) -> Unit
 ) {
-    // 模拟Banner数据，实际替换为repo拉取Emby首页焦点内容
-    val bannerList = remember {
-        listOf(
-            HomeBannerItem(
-                id = "m001",
-                title = "霓虹之夜",
-                subTitle = "都市犯罪系列全季上线",
-                tags = listOf("悬疑", "犯罪", "剧情"),
-                desc = "繁华都市下隐藏重重阴谋，多方势力交织博弈，高口碑剧集全集上线。",
-                imageUrl = ""
-            )
-        )
+    val brand = source?.name?.takeIf { it.isNotBlank() } ?: "Ember"
+    val sid = source?.id ?: ""
+
+    var sections by remember { mutableStateOf<List<HomeSection>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(sid) {
+        loading = true
+        if (sid.isBlank()) { sections = emptyList(); loading = false; return@LaunchedEffect }
+        val out = mutableListOf<HomeSection>()
+        try {
+            val resume = repo.resume(sid)
+            if (resume.isNotEmpty()) out += HomeSection("resume", "继续观看", resume, wide = true)
+            val latest = repo.latest(sid, null)
+            if (latest.isNotEmpty()) out += HomeSection("latest", "最近添加", latest)
+            val libs = repo.libraries(sid)
+            // 并发拉取每个媒体库的前两页，控制并发量避免压垮内网服务器
+            libs.take(8).map { lib ->
+                async {
+                    runCatching { repo.items(sid, lib.id, 0) }.getOrElse { emptyList() }
+                        .let { if (it.isNotEmpty()) HomeSection("lib-${lib.id}", lib.name, it) else null }
+                }
+            }.awaitAll().filterNotNull().let { out += it }
+        } catch (t: Throwable) {
+            android.util.Log.w("EmberHome", "加载首页失败：${t.message}")
+        }
+        sections = out
+        loading = false
     }
 
-    // 栏目，对应你的媒体库分类：动画电影｜动漫剧集｜国产电影｜国产纪录片｜国产剧集
-    val sectionList = remember {
-        listOf(
-            HomeSection("动画电影", emptyList()),
-            HomeSection("动漫剧集", emptyList()),
-            HomeSection("国产电影", emptyList()),
-            HomeSection("国产纪录片", emptyList()),
-            HomeSection("国产剧集", emptyList())
-        )
+    val onClick: (MediaItem) -> Unit = { it ->
+        when (it.kind) {
+            "episode", "movie" -> onPlayMedia(it.id)
+            else -> onOpenDetail(it)   // series / folder
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Ink)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(22.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // ========== 顶部导航栏 ==========
-            item {
-                TopNavBar(onOpenSourceManage = onOpenSourceManage)
+            item { TopNavBar(brand = brand, onOpenSourceManage = onOpenSourceManage) }
+
+            // 头图：取「最近添加」第一部的背景图做主视觉
+            val hero = sections.firstOrNull { it.key == "latest" }?.items?.firstOrNull()
+                ?: sections.firstOrNull { it.key == "resume" }?.items?.firstOrNull()
+            item { hero?.let { HomeHero(item = it, onPlay = { onClick(it) }, onDetail = { onOpenDetail(it) }) } }
+
+            if (loading) {
+                item { SectionSkeleton() }
+            } else if (sections.isEmpty()) {
+                item { EmptyState("还没有内容，去「媒体库」添加你的 Emby / Jellyfin 源吧") }
+            } else {
+                items(sections) { sec -> SectionRow(sec, onClick) }
             }
 
-            // ========== Banner轮播 ==========
-            item {
-                HomeBannerCarousel(
-                    bannerItems = bannerList,
-                    onBannerClick = { item -> onPlayMedia(item.id) }
-                )
-            }
-
-            // ========== 各个横向栏目行 ==========
-            items(sectionList) { section ->
-                HomeContentSection(
-                    section = section,
-                    onCardClick = { card -> onPlayMedia(card.mediaId) }
-                )
-            }
-
-            item { Spacer(modifier = Modifier.height(32.dp)) }
+            item { Spacer(Modifier.height(32.dp)) }
         }
     }
 }
 
-/** 顶部导航栏：Cinego影院｜精选｜电视剧｜电影｜动漫｜纪录片｜媒体库｜搜索 */
+/** 顶部导航栏：品牌名（源名称）｜精选｜电视剧｜电影｜动漫｜纪录片｜媒体库 */
 @Composable
-private fun TopNavBar(onOpenSourceManage: () -> Unit) {
+private fun TopNavBar(brand: String, onOpenSourceManage: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 12.dp),
+            .padding(horizontal = 24.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "Cinego影院",
+            text = brand,
             color = Ember,
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.width(32.dp))
+        Spacer(Modifier.width(28.dp))
 
         val navTabs = listOf("精选", "电视剧", "电影", "动漫", "纪录片")
         navTabs.forEach { tabName ->
@@ -170,88 +175,64 @@ private fun TopNavBar(onOpenSourceManage: () -> Unit) {
                 .tvFocus(scaleUp = 1.05f, onClick = onOpenSourceManage)
         )
 
-        Spacer(modifier = Modifier.weight(1f))
-        Text(text = "🔍 搜索", color = TextMid, fontSize = 15.sp, modifier = Modifier.tvFocus(scaleUp = 1.05f) {})
+        Spacer(Modifier.weight(1f))
+        Text(text = "🔍 搜索", color = TextMid, fontSize = 15.sp,
+            modifier = Modifier.tvFocus(scaleUp = 1.05f) {})
     }
 }
 
-/** 首页大Banner轮播（TV大横幅） */
+/** 首页大横幅头图（用媒体项背景图） */
 @Composable
-private fun HomeBannerCarousel(
-    bannerItems: List<HomeBannerItem>,
-    onBannerClick: (HomeBannerItem) -> Unit
-) {
-    if (bannerItems.isEmpty()) return
-    val pagerState = rememberPagerState(pageCount = { bannerItems.size })
-
-    // 自动轮播
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(5000)
-            val next = (pagerState.currentPage + 1) % bannerItems.size
-            pagerState.animateScrollToPage(next)
-        }
-    }
-
-    HorizontalPager(
-        state = pagerState,
+private fun HomeHero(item: MediaItem, onPlay: () -> Unit, onDetail: () -> Unit) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(320.dp)
             .padding(horizontal = 24.dp)
             .clip(RoundedCornerShape(16.dp))
-    ) { page ->
-        val item = bannerItems[page]
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(InkRaised)
-                // tvFocus 在聚焦时已自带金色发光描边，无需再 drawBehind
-                .tvFocus(scaleUp = 1.02f) { onBannerClick(item) }
-        ) {
-            // 底部渐变遮罩
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
-                            startY = 100f
-                        )
-                    )
+            .background(InkRaised)
+            .tvFocus(scaleUp = 1.02f, onClick = onDetail)
+    ) {
+        if (!item.backdrop.isNullOrBlank() || !item.poster.isNullOrBlank()) {
+            AsyncImage(
+                model = item.backdrop ?: item.poster,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(24.dp)
-            ) {
-                Text(text = item.title, color = TextHi, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text(text = item.subTitle, color = TextMid, fontSize = 16.sp)
-                Row {
-                    item.tags.forEach { tag ->
-                        Text(
-                            text = " $tag ",
-                            color = Ember,
-                            fontSize = 13.sp,
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Ember.copy(alpha = 0.12f))
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = item.desc, color = TextLow, fontSize = 13.sp, maxLines = 2)
-                Spacer(modifier = Modifier.height(14.dp))
-                Button(
-                    onClick = { onBannerClick(item) },
-                    modifier = Modifier
-                        .height(44.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                ) {
-                    Text("播放影片", fontSize = 14.sp)
-                }
+        }
+        Box(
+            modifier = Modifier.fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f)),
+                        startY = 80f
+                    )
+                )
+        )
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(24.dp)
+        ) {
+            Text(item.title, color = TextHi, fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            item.overview?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = TextLow, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    Modifier
+                        .background(Ember, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 24.dp, vertical = 11.dp)
+                        .tvFocus(1.04f, onClick = onPlay)
+                ) { Text("▶ 播放", color = Color(0xFF1A0E04), fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                Box(
+                    Modifier
+                        .background(Color(0x33FFFFFF), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 24.dp, vertical = 11.dp)
+                        .tvFocus(1.04f, onClick = onDetail)
+                ) { Text("详情", color = Color.White, fontSize = 14.sp) }
             }
         }
     }
@@ -259,79 +240,27 @@ private fun HomeBannerCarousel(
 
 /** 内容栏目：标题 + 横向卡片行 */
 @Composable
-private fun HomeContentSection(
-    section: HomeSection,
-    onCardClick: (HomeMediaCard) -> Unit
-) {
+private fun SectionRow(section: HomeSection, onClick: (MediaItem) -> Unit) {
     Column(modifier = Modifier.padding(horizontal = 24.dp)) {
-        Text(
-            text = section.sectionTitle,
-            color = TextHi,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            items(section.items) { cardItem ->
-                MediaTvCard(
-                    item = cardItem,
-                    onClick = { onCardClick(cardItem) }
-                )
-            }
-            // 空列表占位卡片（没拉到媒体时展示）
-            if (section.items.isEmpty()) {
-                items(6) {
-                    MediaTvCardPlaceholder()
-                }
+        Text(section.title, color = TextHi, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(section.items, key = { it.id }) { item ->
+                if (section.wide) WideCard(item = item, onClick = { onClick(item) })
+                else PosterCard(item = item, onClick = { onClick(item) })
             }
         }
     }
 }
 
-/** TV媒体卡片，焦点金色发光描边，复用tvFocus扩展 */
+/** 加载骨架 */
 @Composable
-private fun MediaTvCard(
-    item: HomeMediaCard,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .width(160.dp)
-            .height(240.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(InkRaised)
-            .tvFocus(scaleUp = 1.08f, onClick = onClick)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .background(Color(0xFF222222))
-            )
-            Text(
-                text = item.title,
-                color = TextHi,
-                fontSize = 13.sp,
-                maxLines = 1,
-                modifier = Modifier.padding(8.dp)
-            )
+private fun SectionSkeleton() {
+    Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+        Box(Modifier.width(140.dp).height(20.dp).background(InkRaised, RoundedCornerShape(4.dp)))
+        Spacer(Modifier.height(12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(8) { PosterSkeleton() }
         }
     }
-}
-
-/** 占位卡片，还没加载封面 */
-@Composable
-private fun MediaTvCardPlaceholder() {
-    Box(
-        modifier = Modifier
-            .width(160.dp)
-            .height(240.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(InkRaised)
-            .tvFocus(scaleUp = 1.08f) {}
-    )
 }
