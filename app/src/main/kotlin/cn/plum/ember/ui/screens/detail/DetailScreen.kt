@@ -667,3 +667,49 @@ private fun LinkChip(label: String, onClick: () -> Unit) {
 /** 本地续播进度（服务器端没给 positionSec 时用） */
 private fun localResumeSec(sourceId: String, item: MediaItem): Long =
     cn.plum.ember.data.App.db.progressOf(sourceId, item.id)?.positionSec ?: 0L
+
+/** 剧集单集行：缩略图 + 集名 + 时长 + 进度条 */
+@Composable
+private fun EpisodeRow(ep: MediaItem, onSelectEp: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(InkRaised)
+            .tvFocus(1.02f) { onSelectEp() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .width(120.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Ink)
+        ) {
+            if (!ep.backdrop.isNullOrBlank() || !ep.poster.isNullOrBlank()) {
+                AsyncImage(
+                    model = ep.backdrop ?: ep.poster,
+                    contentDescription = ep.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (ep.resumePercent in 1..99) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp)
+                    .background(Color(0x66000000))) {
+                    Box(Modifier.fillMaxWidth(ep.resumePercent / 100f).fillMaxHeight().background(Ember))
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(ep.title, color = TextHi, fontSize = 14.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ep.subtitle?.let { Text(it, color = TextLow, fontSize = 11.sp) }
+            if (ep.durationSec > 0) {
+                Text(Format.duration(ep.durationSec), color = TextLow, fontSize = 11.sp)
+            }
+        }
+    }
+}
