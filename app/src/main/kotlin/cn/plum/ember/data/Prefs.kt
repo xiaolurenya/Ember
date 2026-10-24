@@ -31,6 +31,10 @@ data class PlayerSettings(
     val networkTimeout: Int = 15,
     /** 自动跳过片头片尾 */
     val autoSkipIntro: Boolean = true,
+    /** 片头时长（秒）：起播位置低于该值时跳过 */
+    val introSkipSec: Int = 90,
+    /** 片尾时长（秒）：剩余时间低于该值时出现「跳过片尾/下一集」 */
+    val creditsLenSec: Int = 180,
     /** 连播下一集 */
     val autoPlayNext: Boolean = true,
     /** 起播默认倍速 */
@@ -59,6 +63,8 @@ class Prefs(private val ctx: Context) {
         val demuxerMaxMb = intPreferencesKey("demuxer_max_mb")
         val networkTimeout = intPreferencesKey("network_timeout")
         val autoSkipIntro = booleanPreferencesKey("auto_skip_intro")
+        val introSkipSec = intPreferencesKey("intro_skip_secs")
+        val creditsLenSec = intPreferencesKey("credits_len_secs")
         val autoPlayNext = booleanPreferencesKey("auto_play_next")
         val defaultSpeed = floatPreferencesKey("default_speed")
         val aspectMode = stringPreferencesKey("aspect_mode")
@@ -83,6 +89,8 @@ class Prefs(private val ctx: Context) {
             demuxerMaxMb = this[K.demuxerMaxMb] ?: 150,
             networkTimeout = this[K.networkTimeout] ?: 15,
             autoSkipIntro = this[K.autoSkipIntro] ?: true,
+            introSkipSec = this[K.introSkipSec] ?: 90,
+            creditsLenSec = this[K.creditsLenSec] ?: 180,
             autoPlayNext = this[K.autoPlayNext] ?: true,
             defaultSpeed = this[K.defaultSpeed] ?: 1.0f,
             aspectMode = this[K.aspectMode] ?: "origin",
@@ -102,6 +110,8 @@ class Prefs(private val ctx: Context) {
     suspend fun setHwdec(v: Boolean) = set { it[K.hwdec] = v }
     suspend fun setCacheSecs(v: Int) = set { it[K.cacheSecs] = v.coerceIn(10, 60) }
     suspend fun setAutoSkipIntro(v: Boolean) = set { it[K.autoSkipIntro] = v }
+    suspend fun setIntroSkipSec(v: Int) = set { it[K.introSkipSec] = v.coerceIn(0, 300) }
+    suspend fun setCreditsLenSec(v: Int) = set { it[K.creditsLenSec] = v.coerceIn(0, 600) }
     suspend fun setAutoPlayNext(v: Boolean) = set { it[K.autoPlayNext] = v }
     suspend fun setDefaultSpeed(v: Float) = set { it[K.defaultSpeed] = v }
     suspend fun setAspectMode(v: String) = set { it[K.aspectMode] = v }
