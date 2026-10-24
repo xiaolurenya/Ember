@@ -73,10 +73,42 @@ object Http {
         fun clear() = store.clear()
     }
 
+    /**
+     * 缓存 key 必须带上「影响建连的参数」。
+     * ⚠️ 只按 source.id 缓存是个坑：用户在表单里改了 baseUrl / 勾了跳过证书 / 配了代理，
+     *    id 没变 → 拿到还是旧 client → 改了半天测的仍是旧配置。
+     */
+    private fun key(source: MediaSource?): String = buildString {
+        append(source?.id ?: "default")
+        append('|').append(source?.baseUrl)
+        append('|').append(source?.skipTlsVerify)
+        append('|').append(source?.useProxy)
+        append('|').append(source?.proxyUrl)
+        append('|').append(
+            source?.extraHeaders?.entries?.sortedBy { it.key }
+                ?.joinToString(";") { "${it.key}=${it.value}" }
+        )
+    }
+
     /** 取该源对应的 OkHttpClient */
     fun client(source: MediaSource?): OkHttpClient {
-        val key = source?.id ?: "default"
-        return clients.getOrPut(key) { build(source) }
+        val k = key(source)
+        return clients.getOrPut(k) { build(source) }
+    }
+
+    /**
+     * 丢掉某个源的所有 client（AdapterRegistry.invalidate 会连带调用）。
+     * 用显式迭代器而不是 removeIf：ConcurrentHashMap.KeySetView 的 removeIf 走的是
+     * Collection 默认实现，在低版本 desugar 链上出过幺蛾子，手写更稳。
+     */
+    fun invalidate(sourceId: String?) {
+        val id = sourceId ?: "default"
+        val prefix = "$id|"
+        val it = clients.keys.iterator()
+        while (it.hasNext()) {
+            val k = it.next()
+            if (k == id || k.startsWith(prefix)) it.remove()
+        }
     }
 
     private fun build(source: MediaSource?): OkHttpClient {
