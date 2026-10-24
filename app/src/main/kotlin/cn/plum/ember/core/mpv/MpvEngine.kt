@@ -115,7 +115,11 @@ class MpvEngine(
     // ===================== 生命周期 =====================
 
     suspend fun start(): Boolean = withContext(Dispatchers.Main) {
-        if (mpv != null) return@withContext true
+        if (mpv != null) {
+            // 进程级单例复用：内核已存在，只热更运行时可改的选项（如设置页切硬解）
+            try { mpv?.setPropertyString("hwdec", if (settings.hwdec) "auto-safe" else "no") } catch (_: Throwable) {}
+            return@withContext true
+        }
         try {
             // mpv-android-lib 0.1.12 的真实签名：无参构造 + create(ctx) + init()
             val m = MPV()
@@ -225,11 +229,20 @@ class MpvEngine(
         }
     }
 
+    /**
+     * 会话结束：停播 + 整个 UI 状态归零。
+     * ⚠️ 只 stop 不 destroy —— MPV 实例是进程级单例（见 App.playerEngine），
+     *    反复 destroy/create 会在第二次起播时 native 崩溃（实测踩坑）。
+     */
     fun stop() {
         val m = mpv ?: return
         try { m.command("stop") } catch (_: Throwable) {}
+        try { m.detachSurface() } catch (_: Throwable) {}
         currentPlayable = null
         pending = null
+        surfaceReady = false
+        seeking = false
+        _state.value = PlayerUiState()
     }
 
     fun destroy() {
