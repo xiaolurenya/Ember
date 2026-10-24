@@ -6,6 +6,9 @@ import android.media.AudioManager
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
@@ -37,6 +41,7 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -52,6 +57,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -68,8 +75,11 @@ import cn.plum.ember.data.MediaItem
 import cn.plum.ember.data.MediaSource
 import cn.plum.ember.data.TrackInfo
 import cn.plum.ember.ui.theme.Ember
+import cn.plum.ember.ui.theme.EmberSoft
+import cn.plum.ember.ui.theme.InkRaised
 import cn.plum.ember.ui.theme.Scrim
 import cn.plum.ember.ui.theme.TextHi
+import cn.plum.ember.ui.theme.TextLow
 import cn.plum.ember.ui.theme.TextMid
 import cn.plum.ember.ui.widgets.isTv
 import cn.plum.ember.ui.widgets.tvFocus
@@ -78,15 +88,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 全屏播放器。
+ * 全屏播放器（libmpv 内核 + 美化 UI）。
  *
- * 手势（全部在此页内实现，不依赖第三方手势库）：
- *   单击 = 呼出/隐藏控制条（3 秒无操作自动隐藏）
+ * 手势（页内实现，不依赖第三方手势库）：
+ *   单击 = 呼出/隐藏控制条（4 秒无操作自动隐藏）
  *   双击 = 播放/暂停
- *   水平拖动 = seek（带预览时间气泡）
+ *   水平拖动 = seek（带中心时间气泡）
  *   左半屏上下滑 = 亮度 ±（带百分比 OSD）
  *   右半屏上下滑 = 音量 ±（带百分比 OSD）
  *   返回 = 退出播放（自动保存进度）
+ *
+ * 与旧版的关键区别：loadfile 由 MpvEngine 保证在 surface 绑定后下发，杜绝首播黑屏。
  */
 @Composable
 fun PlayerScreen(
@@ -114,7 +126,7 @@ fun PlayerScreen(
 
     val engine = remember { MpvEngine(context.applicationContext, settings) }
     val state by engine.state.collectAsState()
-    val brightness = remember { mutableFloatStateOf(0.5f) }
+    val brightness = remember { mutableFloatStateOf(getBrightness(view)) }
     val volume = remember { mutableFloatStateOf(getVolume(context)) }
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
@@ -125,30 +137,30 @@ fun PlayerScreen(
     var gesturePreview by remember { mutableStateOf("") }
 
     var controlsVisible by remember { mutableStateOf(true) }
-    var panelMode by remember { mutableStateOf<String?>(null) }  // audio / sub / speed / aspect / info
+    var panelMode by remember { mutableStateOf<String?>(null) }  // audio / sub / speed / episode / aspect
 
-    // ---- 内核初始化 + 加载 ----
-    LaunchedEffect(item.id) {
+    // ---- 内核初始化 + 加载（load 内部会等 surface 就绪）----
+    LaunchedEffect(itemId) {
         engine.start()
         val r = repo.playable(source?.id ?: "", item, versionIndex)
         if (r.isSuccess) {
             engine.load(r.getOrThrow())
         } else {
-            // 起播失败也显示错误页
-            android.util.Log.e("Ember", "起播失败：${r.exceptionOrNull()?.message}")
+            val msg = r.exceptionOrNull()?.message ?: "未知错误"
+            android.util.Log.e("Ember", "起播失败：$msg")
         }
     }
 
-    // ---- 控制条自动隐藏（3 秒）----
-    LaunchedEffect(controlsVisible, state.positionSec) {
+    // ---- 控制条自动隐藏（4 秒）----
+    LaunchedEffect(controlsVisible, panelMode) {
         if (controlsVisible && panelMode == null) {
-            delay(3000)
-            controlsVisible = false
+            delay(4000)
+            if (panelMode == null) controlsVisible = false
         }
     }
 
     // ---- 进度定时上报（每 10 秒）----
-    LaunchedEffect(item.id) {
+    LaunchedEffect(itemId) {
         while (true) {
             delay(10_000)
             if (state.loaded && state.durationSec > 0) {
@@ -158,9 +170,9 @@ fun PlayerScreen(
     }
 
     // ---- 自动下一集 ----
-    val episodes = if (item.kind == "episode") item.episodes else emptyList()
+    val episodes = if (item.kind == "episode" || item.kind == "series") item.episodes else emptyList()
     val currentEpIdx = episodes.indexOfFirst { it.id == item.id }
-    LaunchedEffect(state.finished, state.durationSec) {
+    LaunchedEffect(state.finished) {
         if (state.finished && settings.autoPlayNext) {
             val next = episodes.getOrNull(currentEpIdx + 1)
             if (next != null) {
@@ -174,8 +186,6 @@ fun PlayerScreen(
     // ---- 退出时保存进度 ----
     DisposableEffect(Unit) {
         onDispose {
-            // onDispose 不是协程上下文，且此刻组合的协程已被取消 —— 直接同步落本地库，
-            // 服务器回写交给上面那个 10 秒周期任务，不在这里做。
             val dur = state.durationSec.toLong()
             val pos = state.positionSec.toLong()
             if (dur > 0) {
@@ -221,28 +231,66 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // ---- 加载中指示 ----
-        if (state.buffering && !state.loaded) {
+        // ---- 加载 / 缓冲指示 ----
+        if (state.buffering && !state.loaded && state.error == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        color = Ember, modifier = Modifier.size(48.dp)
+                    CircularProgressIndicator(
+                        color = Ember, modifier = Modifier.size(48.dp), strokeWidth = 3.dp
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("正在加载…", color = TextMid, fontSize = 13.sp)
+                    Text("正在缓冲…", color = TextMid, fontSize = 13.sp)
                 }
+            }
+        }
+
+        // ---- 中央播放/暂停反馈 ----
+        AnimatedVisibility(
+            visible = !state.buffering && state.loaded && !controlsVisible && !state.playing && state.error == null,
+            enter = fadeIn(), exit = fadeOut()
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Pause, contentDescription = "已暂停",
+                    tint = Color(0xAAFFFFFF), modifier = Modifier.size(80.dp))
+            }
+        }
+
+        // ---- 手势预览 OSD（seek / 亮度 / 音量）----
+        if (gesturePreview.isNotBlank()) {
+            Box(
+                Modifier.align(Alignment.Center)
+                    .background(Color(0xCC000000), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            ) {
+                Text(gesturePreview, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+
+        // ---- 解码信息浮层（设置开启时）----
+        if (settings.showDecoderInfo && state.loaded) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 12.dp)
+                    .background(Color(0x99000000), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Text(
+                    "${state.width}x${state.height}\n" +
+                            "v: ${state.videoCodec ?: "-"}${if (state.hwdecActive) " (hw)" else " (sw)"}\n" +
+                            "a: ${state.audioCodec ?: "-"}\n" +
+                            "cache: ${state.cacheAheadSec.toInt()}s\n" +
+                            "speed: ${state.speed}x",
+                    color = Color(0xAAFFFFFF), fontSize = 10.sp, lineHeight = 14.sp
+                )
             }
         }
 
         // ---- 错误页（保留重试 + 返回）----
         state.error?.let { err ->
             Box(Modifier.fillMaxSize().background(Color(0xEE000000)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(24.dp)) {
-                    Text("⚠", color = Color(0xFFFF4444), fontSize = 60.sp)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                    Text("⚠", color = Color(0xFFFF5555), fontSize = 60.sp)
                     Spacer(Modifier.height(12.dp))
-                    Text(err, color = Color.White, fontSize = 16.sp,
-                        maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(err, color = Color.White, fontSize = 16.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(20.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(
@@ -286,7 +334,6 @@ fun PlayerScreen(
                             gestureStartX = offset.x
                             gestureStartY = offset.y
                             gestureStartPos = state.positionSec.toFloat()
-                            // 起手方向决定模式：先假设是水平 seek
                             gestureMode = null
                         },
                         onDrag = { change, drag ->
@@ -298,37 +345,29 @@ fun PlayerScreen(
                             }
                             when (gestureMode) {
                                 0 -> {
-                                    // 水平：seek（每 px = 0.25 秒）
                                     val delta = dx * 0.25f
-                                    val target = (gestureStartPos + delta)
-                                        .coerceIn(0f, state.durationSec.toFloat())
+                                    val target = (gestureStartPos + delta).coerceIn(0f, state.durationSec.toFloat())
                                     gesturePreview = "${if (delta >= 0) "→" else "←"} ${Format.duration(target.toLong())}"
                                 }
                                 1 -> {
-                                    // 左半屏：亮度
                                     val delta = -dy / (size.height * 0.7f)
                                     val nb = (brightness.floatValue + delta).coerceIn(0.02f, 1f)
                                     brightness.floatValue = nb
-                                    (view.context as? Activity)?.window?.attributes =
-                                        (view.context as? Activity)?.window?.attributes?.apply {
-                                            screenBrightness = nb
-                                        }
+                                    setBrightness(view, nb)
                                     gesturePreview = "亮度 ${(nb * 100).toInt()}%"
                                 }
                                 2 -> {
-                                    // 右半屏：音量
                                     val delta = -dy / (size.height * 0.7f)
                                     val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                     val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                                     val nv = (cur + (delta * max).toInt()).coerceIn(0, max)
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, nv, 0)
-                                    volume.floatValue = nv / max.toFloat()
+                                    volume.floatValue = if (max > 0) nv / max.toFloat() else 0f
                                     gesturePreview = "音量 ${(volume.floatValue * 100).toInt()}%"
                                 }
                             }
                         },
                         onDragEnd = {
-                            // 松手：把 seek 落下去
                             if (gestureMode == 0 && gesturePreview.isNotBlank()) {
                                 val t = gesturePreview.removePrefix("→ ").removePrefix("← ")
                                 val parts = t.split(":")
@@ -346,158 +385,165 @@ fun PlayerScreen(
                 }
         )
 
-        // ---- 手势预览 OSD ----
-        if (gesturePreview.isNotBlank()) {
-            Box(
-                Modifier.align(Alignment.Center)
-                    .background(Color(0xCC000000), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                Text(gesturePreview, color = Color.White, fontSize = 15.sp)
-            }
-        }
-
-        // ---- 中央播放/暂停反馈 ----
-        if (!state.buffering && state.loaded && !controlsVisible && !state.playing && state.error == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Pause, contentDescription = "已暂停",
-                    tint = Color(0x88FFFFFF), modifier = Modifier.size(80.dp))
-            }
-        }
-
-        // ---- 控制条 ----
-        if (controlsVisible && state.error == null) {
-            Column(
-                Modifier.fillMaxSize().background(Scrim)
-            ) {
-                // 顶部
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        // ---- 控制条（上下渐变遮罩 + 控件）----
+        AnimatedVisibility(
+            visible = controlsVisible && state.error == null,
+            enter = fadeIn(), exit = fadeOut()
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                // 顶部渐变 + 标题 + 工具按钮
+                Box(
+                    Modifier.fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color(0xE6000000), Color.Transparent)))
+                        .padding(horizontal = if (tv) 24.dp else 12.dp, vertical = 10.dp)
                 ) {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(item.title, color = Color.White, fontSize = 15.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (state.width > 0) {
-                            Text(
-                                "${state.width}×${state.height} · " +
-                                        (if (state.hwdecActive) "硬解" else "软解") +
-                                        (if (state.hdrActive) " · HDR" else "") +
-                                        " · ${Format.bitrate(state.bitrate)}",
-                                color = Color(0x99FFFFFF), fontSize = 11.sp
-                            )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
                         }
-                    }
-                    IconButton(onClick = { panelMode = if (panelMode == "audio") null else "audio" }) {
-                        Icon(Icons.Default.Tune, contentDescription = "音轨", tint = Color.White)
-                    }
-                    IconButton(onClick = { panelMode = if (panelMode == "sub") null else "sub" }) {
-                        Icon(Icons.Default.Subtitles, contentDescription = "字幕", tint = Color.White)
-                    }
-                    IconButton(onClick = { panelMode = if (panelMode == "speed") null else "speed" }) {
-                        Icon(Icons.Default.Speed, contentDescription = "倍速", tint = Color.White)
+                        Column(Modifier.weight(1f)) {
+                            Text(item.title.ifBlank { "正在播放" },
+                                color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            val meta = buildString {
+                                if (state.width > 0) append("${state.width}×${state.height}  ")
+                                append(if (state.hwdecActive) "硬解" else "软解")
+                                if (state.hdrActive) append(" · HDR")
+                                state.videoCodec?.let { append(" · ${it.uppercase()}") }
+                            }
+                            if (meta.isNotBlank()) {
+                                Text(meta, color = Color(0xBBFFFFFF), fontSize = 11.sp)
+                            }
+                        }
+                        IconButton(onClick = { panelMode = if (panelMode == "audio") null else "audio" }) {
+                            Icon(Icons.Default.Tune, contentDescription = "音轨", tint = Color.White)
+                        }
+                        IconButton(onClick = { panelMode = if (panelMode == "sub") null else "sub" }) {
+                            Icon(Icons.Default.Subtitles, contentDescription = "字幕", tint = Color.White)
+                        }
+                        IconButton(onClick = { panelMode = if (panelMode == "speed") null else "speed" }) {
+                            Icon(Icons.Default.Speed, contentDescription = "倍速", tint = Color.White)
+                        }
+                        IconButton(onClick = { panelMode = if (panelMode == "aspect") null else "aspect" }) {
+                            Icon(Icons.Default.AspectRatio, contentDescription = "画面比例", tint = Color.White)
+                        }
+                        if (episodes.isNotEmpty()) {
+                            Box(
+                                Modifier.tvFocus(1.05f) {
+                                    panelMode = if (panelMode == "episode") null else "episode"
+                                }
+                                .padding(10.dp)
+                            ) {
+                                Text("选集", color = EmberSoft, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
                     }
                 }
 
                 Spacer(Modifier.weight(1f))
 
-                // 底部：进度条 + 控制按钮
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    // 进度条：拖动中只更新本地预览，松手才真正 seek（避免拖动过程狂发 seek）
-                    var dragging by remember { mutableStateOf(false) }
-                    var dragValue by remember { mutableFloatStateOf(0f) }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            Format.duration(if (dragging) (dragValue * state.durationSec).toLong() else state.positionSec.toLong()),
-                            color = Color.White, fontSize = 11.sp
-                        )
-                        Slider(
-                            value = if (dragging) dragValue
-                            else if (state.durationSec > 0)
-                                (state.positionSec / state.durationSec).toFloat().coerceIn(0f, 1f) else 0f,
-                            onValueChange = { v ->
-                                dragging = true
-                                dragValue = v
-                            },
-                            onValueChangeFinished = {
-                                if (dragging) {
-                                    engine.seekTo(dragValue * state.durationSec)
-                                    dragging = false
-                                }
-                            },
-                            colors = SliderDefaults.colors(
-                                thumbColor = Ember, activeTrackColor = Ember,
-                                inactiveTrackColor = Color(0x55FFFFFF)
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(Format.duration(state.durationSec.toLong()), color = Color.White, fontSize = 11.sp)
-                    }
-                    // 主控制按钮行
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 上一集
-                        if (episodes.isNotEmpty() && currentEpIdx > 0) {
-                            IconButton(onClick = {
-                                episodes.getOrNull(currentEpIdx - 1)?.let { prev ->
-                                    scope.launch {
-                                        val r = repo.playable(source?.id ?: "", prev, versionIndex)
-                                        if (r.isSuccess) engine.load(r.getOrThrow())
-                                    }
-                                }
-                            }) {
-                                Icon(Icons.Default.SkipNext, contentDescription = "上一集",
-                                    tint = Color.White, modifier = Modifier.size(28.dp))
-                            }
-                        }
-                        IconButton(onClick = { engine.seekBy(-settings.seekStep.toDouble()) }) {
-                            Icon(Icons.Default.Replay10, contentDescription = "后退", tint = Color.White)
-                        }
-                        // 播放/暂停
-                        IconButton(onClick = { engine.togglePlay() }, modifier = Modifier.size(60.dp)) {
-                            Icon(
-                                if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "播放/暂停",
-                                tint = Color.White,
-                                modifier = Modifier.size(46.dp)
+                // 底部渐变 + 进度 + 控制
+                Box(
+                    Modifier.fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
+                        .padding(horizontal = if (tv) 24.dp else 16.dp, vertical = if (tv) 12.dp else 8.dp)
+                ) {
+                    Column {
+                        var dragging by remember { mutableStateOf(false) }
+                        var dragValue by remember { mutableFloatStateOf(0f) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                Format.duration(if (dragging) (dragValue * state.durationSec).toLong() else state.positionSec.toLong()),
+                                color = Color.White, fontSize = 12.sp
                             )
-                        }
-                        IconButton(onClick = { engine.seekBy(settings.seekStep.toDouble()) }) {
-                            Icon(Icons.Default.Forward10, contentDescription = "前进", tint = Color.White)
-                        }
-                        // 下一集
-                        if (episodes.isNotEmpty() && currentEpIdx < episodes.size - 1) {
-                            IconButton(onClick = {
-                                episodes.getOrNull(currentEpIdx + 1)?.let { next ->
-                                    scope.launch {
-                                        repo.markWatched(source?.id ?: "", item)
-                                        val r = repo.playable(source?.id ?: "", next, versionIndex)
-                                        if (r.isSuccess) engine.load(r.getOrThrow())
+                            Slider(
+                                value = if (dragging) dragValue
+                                else if (state.durationSec > 0)
+                                    (state.positionSec / state.durationSec).toFloat().coerceIn(0f, 1f) else 0f,
+                                onValueChange = { v ->
+                                    dragging = true
+                                    dragValue = v
+                                },
+                                onValueChangeFinished = {
+                                    if (dragging) {
+                                        engine.seekTo(dragValue * state.durationSec)
+                                        dragging = false
                                     }
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Ember, activeTrackColor = Ember,
+                                    inactiveTrackColor = Color(0x55FFFFFF)
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(Format.duration(state.durationSec.toLong()), color = Color.White, fontSize = 12.sp)
+                        }
+
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = if (tv) 10.dp else 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 上一集
+                            if (episodes.isNotEmpty() && currentEpIdx > 0) {
+                                IconButton(onClick = {
+                                    episodes.getOrNull(currentEpIdx - 1)?.let { prev ->
+                                        scope.launch {
+                                            val r = repo.playable(source?.id ?: "", prev, versionIndex)
+                                            if (r.isSuccess) engine.load(r.getOrThrow())
+                                        }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.SkipNext, contentDescription = "上一集",
+                                        tint = Color.White, modifier = Modifier.size(if (tv) 30.dp else 26.dp))
                                 }
-                            }) {
-                                Icon(Icons.Default.SkipNext, contentDescription = "下一集", tint = Color.White)
+                            }
+                            IconButton(onClick = { engine.seekBy(-settings.seekStep.toDouble()) }) {
+                                Icon(Icons.Default.Replay10, contentDescription = "后退", tint = Color.White,
+                                    modifier = Modifier.size(if (tv) 30.dp else 26.dp))
+                            }
+                            IconButton(onClick = { engine.togglePlay() }, modifier = Modifier.size(if (tv) 72.dp else 56.dp)) {
+                                Icon(
+                                    if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "播放/暂停", tint = Color.White,
+                                    modifier = Modifier.size(if (tv) 54.dp else 42.dp)
+                                )
+                            }
+                            IconButton(onClick = { engine.seekBy(settings.seekStep.toDouble()) }) {
+                                Icon(Icons.Default.Forward10, contentDescription = "前进", tint = Color.White,
+                                    modifier = Modifier.size(if (tv) 30.dp else 26.dp))
+                            }
+                            // 下一集
+                            if (episodes.isNotEmpty() && currentEpIdx >= 0 && currentEpIdx < episodes.size - 1) {
+                                IconButton(onClick = {
+                                    episodes.getOrNull(currentEpIdx + 1)?.let { next ->
+                                        scope.launch {
+                                            repo.markWatched(source?.id ?: "", item)
+                                            val r = repo.playable(source?.id ?: "", next, versionIndex)
+                                            if (r.isSuccess) engine.load(r.getOrThrow())
+                                        }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.SkipNext, contentDescription = "下一集",
+                                        tint = Color.White, modifier = Modifier.size(if (tv) 30.dp else 26.dp))
+                                }
                             }
                         }
                     }
                 }
             }
+        }
 
-            // ---- 底部弹出面板：音轨 / 字幕 / 倍速 ----
+        // ---- 底部弹出面板：音轨 / 字幕 / 倍速 / 选集 / 画面比例 ----
+        AnimatedVisibility(
+            visible = panelMode != null,
+            enter = fadeIn(), exit = fadeOut()
+        ) {
             panelMode?.let { mode ->
-                Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.BottomCenter
-                ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                     Column(
-                        Modifier.fillMaxWidth().background(Color(0xF212100E))
-                            .padding(20.dp)
+                        Modifier.fillMaxWidth().background(InkRaised.copy(alpha = 0.98f))
+                            .padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -505,9 +551,10 @@ fun PlayerScreen(
                                     "audio" -> "音轨选择"
                                     "sub" -> "字幕选择"
                                     "speed" -> "播放倍速"
+                                    "episode" -> "选集"
                                     else -> "画面比例"
                                 },
-                                color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
+                                color = TextHi, fontSize = 17.sp, fontWeight = FontWeight.SemiBold
                             )
                             Spacer(Modifier.weight(1f))
                             Text("关闭", color = TextMid, fontSize = 13.sp,
@@ -515,64 +562,100 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.height(10.dp))
 
-                        LazyColumn(Modifier.height(260.dp)) {
-                            when (mode) {
-                                "audio" -> {
-                                    items(state.audioTracks, key = { it.id }) { t ->
-                                        TrackRow(t, state.currentAudio == t.id) { engine.setAudioTrack(t.id) }
-                                    }
+                        when (mode) {
+                            "audio" -> AudioSubList(state.audioTracks, state.currentAudio) { engine.setAudioTrack(it) }
+                            "sub" -> {
+                                TrackRow(TrackInfo(-1, "sub", title = "关闭字幕"), state.currentSub == -1) {
+                                    engine.setSubtitleTrack(-1)
                                 }
-                                "sub" -> {
-                                    // 「关闭字幕」放在最上面
-                                    item {
-                                        TrackRow(
-                                            TrackInfo(-1, "sub", title = "关闭字幕"),
-                                            state.currentSub == -1
-                                        ) { engine.setSubtitleTrack(-1) }
-                                    }
-                                    items(state.subTracks, key = { it.id }) { t ->
-                                        TrackRow(t, state.currentSub == t.id) { engine.setSubtitleTrack(t.id) }
-                                    }
-                                }
-                                "speed" -> {
-                                    items(cn.plum.ember.util.Format.speedTable(), key = { it.toString() }) { s ->
-                                        Row(
-                                            Modifier.fillMaxWidth()
-                                                .tvFocus(1.02f) { engine.setSpeed(s) }
-                                                .padding(vertical = 12.dp, horizontal = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                "${s}x", color = if (state.speed == s) Ember else TextHi,
-                                                fontSize = 15.sp, fontWeight = FontWeight.Medium
-                                            )
-                                            Spacer(Modifier.weight(1f))
-                                            if (state.speed == s) Text("✓", color = Ember, fontSize = 15.sp)
-                                        }
-                                    }
-                                }
+                                Spacer(Modifier.height(4.dp))
+                                AudioSubList(state.subTracks, state.currentSub) { engine.setSubtitleTrack(it) }
                             }
+                            "speed" -> SpeedList(state.speed) { engine.setSpeed(it) }
+                            "episode" -> EpisodeGrid(episodes, currentEpIdx) { ep ->
+                                scope.launch {
+                                    repo.markWatched(source?.id ?: "", item)
+                                    val r = repo.playable(source?.id ?: "", ep, versionIndex)
+                                    if (r.isSuccess) engine.load(r.getOrThrow())
+                                }
+                                panelMode = null
+                            }
+                            "aspect" -> AspectList { engine.setAspect(it); panelMode = null }
                         }
                     }
                 }
             }
         }
+    }
+}
 
-        // ---- 解码信息浮层（长按/设置开启显示）----
-        if (settings.showDecoderInfo && state.loaded) {
-            Box(
-                Modifier.align(Alignment.TopEnd).padding(12.dp)
-                    .background(Color(0x99000000), RoundedCornerShape(8.dp))
-                    .padding(8.dp)
+@Composable
+private fun AudioSubList(tracks: List<TrackInfo>, current: Int, onSelect: (Int) -> Unit) {
+    if (tracks.isEmpty()) {
+        Text("暂无可选轨道", color = TextLow, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+        return
+    }
+    LazyColumn(Modifier.fillMaxHeight(0.5f)) {
+        items(tracks, key = { it.id }) { t ->
+            TrackRow(t, current == t.id) { onSelect(t.id) }
+        }
+    }
+}
+
+@Composable
+private fun SpeedList(current: Float, onSelect: (Float) -> Unit) {
+    LazyColumn(Modifier.fillMaxHeight(0.5f)) {
+        items(Format.speedTable(), key = { it.toString() }) { s ->
+            Row(
+                Modifier.fillMaxWidth().tvFocus(1.02f) { onSelect(s) }
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("${s}x", color = if (current == s) Ember else TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.weight(1f))
+                if (current == s) Text("✓", color = Ember, fontSize = 15.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AspectList(onSelect: (String) -> Unit) {
+    val modes = listOf("origin" to "原始比例", "16:9" to "16:9", "4:3" to "4:3", "2.35:1" to "影院 2.35:1")
+    LazyColumn(Modifier.fillMaxHeight(0.5f)) {
+        items(modes, key = { it.first }) { (k, label) ->
+            Row(
+                Modifier.fillMaxWidth().tvFocus(1.02f) { onSelect(k) }
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(label, color = TextHi, fontSize = 15.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeGrid(episodes: List<MediaItem>, currentIdx: Int, onSelect: (MediaItem) -> Unit) {
+    LazyColumn(Modifier.fillMaxHeight(0.6f)) {
+        items(episodes, key = { it.id }) { ep ->
+            val idx = episodes.indexOf(ep)
+            Row(
+                Modifier.fillMaxWidth().tvFocus(1.02f) { onSelect(ep) }
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${state.width}x${state.height}\n" +
-                            "v: ${state.videoCodec ?: "-"} ${if (state.hwdecActive) "(hw)" else "(sw)"}\n" +
-                            "a: ${state.audioCodec ?: "-"}\n" +
-                            "cache: ${state.cacheAheadSec.toInt()}s\n" +
-                            "speed: ${state.speed}x",
-                    color = Color(0xAAFFFFFF), fontSize = 10.sp, lineHeight = 14.sp
+                    ep.subtitle ?: ep.title,
+                    color = if (idx == currentIdx) Ember else TextHi,
+                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
+                Spacer(Modifier.weight(1f))
+                if (ep.resumePercent in 1..99) {
+                    Text("${ep.resumePercent}%", color = TextMid, fontSize = 12.sp)
+                } else if (idx == currentIdx) {
+                    Text("▶", color = Ember, fontSize = 14.sp)
+                }
             }
         }
     }
@@ -598,6 +681,16 @@ private fun TrackRow(t: TrackInfo, selected: Boolean, onSelect: () -> Unit) {
 private fun getVolume(ctx: Context): Float {
     val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-    return am.getStreamVolume(AudioManager.STREAM_MUSIC) / max.toFloat()
+    return if (max > 0) am.getStreamVolume(AudioManager.STREAM_MUSIC) / max.toFloat() else 0f
 }
 
+private fun getBrightness(view: android.view.View): Float {
+    val win = (view.context as? Activity)?.window ?: return 0.5f
+    val b = win.attributes.screenBrightness
+    return if (b >= 0) b.toFloat() else 0.5f
+}
+
+private fun setBrightness(view: android.view.View, value: Float) {
+    val win = (view.context as? Activity)?.window ?: return
+    win.attributes = win.attributes.apply { screenBrightness = value }
+}
