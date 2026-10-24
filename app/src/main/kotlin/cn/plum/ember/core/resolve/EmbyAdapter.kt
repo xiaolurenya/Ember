@@ -276,17 +276,54 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
     }
 
     // ================= 解析播放地址 =================
-    override suspend fun playable(item: MediaItem, versionIndex: Int): Result<Playable> {
-        ensureAuth().getOrThrow()
+    /**
+     * ⚠️ 血泪教训（2026-10-24 模拟器实测抓到的崩溃）：
+     * 这个方法里的每一次网络调用都必须接住 Throwable，绝不能让异常逃出去——
+     * 一旦逃出去，协程未捕获异常会直接杀死进程，用户看到的就是
+     * 「点播放 → 播放页一闪 → 闪退回桌面」，且所有版本必现。
+     * 罪魁是 strm 的 /Download 拉内容：Emby 中转大文件时断流会抛
+     * ProtocolException: unexpected end of stream，之前裸奔没接。
+     */
+    override suspend fun playable(item: MediaItem, versionIndex: Int): Result<Playable> = try {
+        ensureAuth().fold(
+            onSuccess = {},
+            onFailure = { t ->
+                return Result.failure(RuntimeException(
+                    cn.plum.ember.core.net.Http.describe(t), t))
+            }
+        )
         val v = item.versions.getOrNull(versionIndex) ?: item.versions.firstOrNull()
 
         // ① .strm 条目：Emby 自己解析不了，直接 500 —— 必须走 Download 拿内容
         if (item.isStrm) {
             val strmUrl = item.strmUrl ?: run {
-                val resp = Http.get(url("/Items/${item.id}/Download", mapOf("api_key" to (accessToken ?: ""))), source)
-                val text = resp.body?.string()
-                resp.close()
-                StreamResolver.parseStrm(text ?: "")
+                // /Download 对 strm 有两种行为：302 跳到真实地址，或 200 直出 strm 文本。
+                // 手动跟跳转（沿途收 Cookie），终点若是 200 再小读一段判断内容形态。
+                val resolved = Http.resolveRedirects(
+                    url("/Items/${item.id}/Download", mapOf("api_key" to (accessToken ?: ""))),
+                    source
+                )
+                if (resolved.status in 200..299) {
+                    // 200：可能是 strm 文本，也可能是 Emby 中转的媒体流。
+                    // ⚠️ 只读前 128 字节（绝不能用 body.string()——中转大文件会读爆内存），
+                    // 像 URL 就当 strm 解析，否则终点即直链。
+                    val probe = Http.get(
+                        resolved.finalUrl, source,
+                        mapOf("Range" to "bytes=0-127", "User-Agent" to Http.DEFAULT_UA)
+                    )
+                    val head = try {
+                        probe.body?.byteStream()?.use { ins ->
+                            val buf = ByteArray(128)
+                            val n = ins.read(buf)
+                            if (n > 0) String(buf, 0, n, Charsets.UTF_8) else null
+                        }
+                    } catch (_: Throwable) { null } finally { probe.close() }
+                    StreamResolver.parseStrm(head ?: "") ?: resolved.finalUrl
+                } else if (resolved.status in 300..399) {
+                    resolved.finalUrl   // 跳转终点即直链（Cookie 已沿途收集）
+                } else {
+                    null
+                }
             }
             if (strmUrl.isNullOrBlank()) {
                 return Result.failure(IllegalStateException(".strm 内容为空，无法解析直链"))
@@ -306,7 +343,7 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
             "api_key" to (accessToken ?: "")
         ))
         // Emby 对某些容器 / 字幕组合可能会先 30x 跳转，同样走 StreamResolver
-        return StreamResolver.resolve(
+        StreamResolver.resolve(
             target = streamUrl,
             source = source,
             extraHeaders = mapOf("Range" to "bytes=0-"),   // 保留 Range 以便 mpv seek
@@ -315,6 +352,9 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
         ).map { p ->
             if (v != null && v.width > 0) p else p
         }
+    } catch (t: Throwable) {
+        // 兜底：任何异常（网络/解析/鉴权）都不允许杀死进程
+        Result.failure(RuntimeException(cn.plum.ember.core.net.Http.describe(t), t))
     }
 
     // ================= 进度回写 =================
