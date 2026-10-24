@@ -95,7 +95,7 @@ object StreamResolver {
         val resp = try {
             Http.get(url, source, probeHeaders)
         } catch (t: Throwable) {
-            return@withContext Result.failure(RuntimeException("网络错误：${t.message ?: "无法连接"}"))
+            return@withContext Result.failure(RuntimeException(Http.describe(t)))
         }
 
         val status = resp.code
