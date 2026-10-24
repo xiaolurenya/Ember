@@ -77,7 +77,7 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
                 Result.failure(RuntimeException("服务器返回异常：缺少 User.Id"))
             } else Result.success(Unit)
         } catch (t: Throwable) {
-            Result.failure(RuntimeException("无法连接服务器：${t.message ?: "网络错误"}"))
+            Result.failure(RuntimeException(Http.describe(t)))
         }
     }
 
