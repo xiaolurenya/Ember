@@ -153,6 +153,15 @@ class LibraryRepo {
         } catch (_: Throwable) {}
     }
 
+    /** 取消已看（详情页勾选按钮的取消态；本地+服务器双写） */
+    suspend fun markUnwatched(sourceId: String, item: MediaItem) = withContext(Dispatchers.IO) {
+        App.db.saveProgress(PlayProgress(sourceId, item.id, 0L,
+            item.durationSec, watched = false))
+        try {
+            hydrated(sourceId)?.let { adapter(it).markUnwatched(item) }
+        } catch (_: Throwable) {}
+    }
+
     suspend fun related(sourceId: String, item: MediaItem): List<MediaItem> = withContext(Dispatchers.IO) {
         try { hydrated(sourceId)?.let { adapter(it).related(item) } } catch (_: Throwable) { null }
     } ?: emptyList()
