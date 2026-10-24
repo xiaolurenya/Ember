@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Splash / 应用内用的品牌标（512 viewport，**透明背景**）。
-  Splash 页本身就是 #0B0908 深炭色，播放三角的洞会透出它 —— 这样品牌标
-  在任何深色页面上都没有「方框感」，火苗是浮着的。
+  Splash 页本身就是 #0B0908 深炭色，播放三角的洞会透出它 —— 品牌标在任何深色
+  页面上都没有「方框感」，火苗是浮着的。
+
+  ⚠️ 这份是 ic_launcher_foreground.xml 的**精确等比放大**（×512/108 = 4.740741）。
+  v1.1.2 之前两稿各画各的：512 的火苗比例和 108 完全不一样，导致桌面上看还行、
+  进 App 看 Splash 就歪 —— 三角质心偏离火苗质心 dx=-10、dy=+26。
+  现在只有一个几何真源（108），512 由它缩放导出，永远一致。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
@@ -14,19 +19,19 @@
     <!-- 外焰（中央镂空播放三角） -->
     <path
         android:fillType="evenOdd"
-        android:pathData="M256,108
-            C256,180 138,212 138,300
-            A118,118 0 0,0 374,300
-            C374,212 256,180 256,108
+        android:pathData="M256,147.4
+            C256,198.2 173,220.4 173,282.1
+            A83,83 0 0,0 339,282.1
+            C339,220.4 256,198.2 256,147.4
             Z
-            M226,281 L286,320 L226,359 Z">
+            M241.8,250 L284.4,277.7 L241.8,305.5 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
                 android:startX="256"
-                android:startY="108"
+                android:startY="147.4"
                 android:endX="256"
-                android:endY="418">
+                android:endY="365.1">
                 <item android:color="#FFFFB85C" android:offset="0.0" />
                 <item android:color="#FFFF7A18" android:offset="0.45" />
                 <item android:color="#FFC63F00" android:offset="1.0" />
@@ -34,22 +39,22 @@
         </aapt:attr>
     </path>
 
-    <!-- 内焰 -->
+    <!-- 内焰（外焰 ×0.55 同心缩放） -->
     <path
         android:fillType="evenOdd"
-        android:pathData="M256,210
-            C256,258 196,262 196,320
-            A60,60 0 0,0 316,320
-            C316,262 256,258 256,210
+        android:pathData="M256,206.1
+            C256,234 210.4,246.2 210.4,280.1
+            A45.6,45.6 0 0,0 301.6,280.1
+            C301.6,246.2 256,234 256,206.1
             Z
-            M226,281 L286,320 L226,359 Z">
+            M241.8,250 L284.4,277.7 L241.8,305.5 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
                 android:startX="256"
-                android:startY="210"
+                android:startY="206.1"
                 android:endX="256"
-                android:endY="380">
+                android:endY="325.7">
                 <item android:color="#FFFFE9BC" android:offset="0.0" />
                 <item android:color="#FFFFC24A" android:offset="0.5" />
                 <item android:color="#FFFF8A2B" android:offset="1.0" />
