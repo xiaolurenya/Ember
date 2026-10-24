@@ -297,45 +297,62 @@ open class EmbyAdapter(override val source: MediaSource) : SourceAdapter {
 
         // ① .strm 条目：Emby 自己解析不了，直接 500 —— 必须走 Download 拿内容
         if (item.isStrm) {
-            val strmUrl = item.strmUrl ?: run {
-                // /Download 对 strm 有两种行为：302 跳到真实地址，或 200 直出 strm 文本。
-                // 手动跟跳转（沿途收 Cookie），终点若是 200 再小读一段判断内容形态。
-                val resolved = Http.resolveRedirects(
-                    url("/Items/${item.id}/Download", mapOf("api_key" to (accessToken ?: ""))),
-                    source
+            val direct = item.strmUrl
+            if (!direct.isNullOrBlank() && direct.startsWith("http", true)) {
+                // Path 字段直接给了 URL 型 strm 内容 → 走标准解析管线
+                return StreamResolver.resolve(
+                    target = direct,
+                    source = source,
+                    startSec = item.positionSec,
+                    title = item.title
                 )
-                if (resolved.status in 200..299) {
-                    // 200：可能是 strm 文本，也可能是 Emby 中转的媒体流。
-                    // ⚠️ 只读前 128 字节（绝不能用 body.string()——中转大文件会读爆内存），
-                    // 像 URL 就当 strm 解析，否则终点即直链。
-                    val probe = Http.get(
-                        resolved.finalUrl, source,
-                        mapOf("Range" to "bytes=0-127", "User-Agent" to Http.DEFAULT_UA)
-                    )
-                    val head = try {
-                        probe.body?.byteStream()?.use { ins ->
-                            val buf = ByteArray(128)
-                            val n = ins.read(buf)
-                            if (n > 0) String(buf, 0, n, Charsets.UTF_8) else null
-                        }
-                    } catch (_: Throwable) { null } finally { probe.close() }
-                    StreamResolver.parseStrm(head ?: "") ?: resolved.finalUrl
-                } else if (resolved.status in 300..399) {
-                    resolved.finalUrl   // 跳转终点即直链（Cookie 已沿途收集）
-                } else {
-                    null
-                }
             }
-            if (strmUrl.isNullOrBlank()) {
-                return Result.failure(IllegalStateException(".strm 内容为空，无法解析直链"))
-            }
-            // strm 里通常是网盘的 302 地址或 raw 直链，交给 StreamResolver 统一处理
-            return StreamResolver.resolve(
-                target = strmUrl,
-                source = source,
-                startSec = item.positionSec,
-                title = item.title
+            // ⚠️ Emby 的 /Download 对 strm 有三种行为（模拟器实测）：
+            //   a) 302 链跳到真实地址 —— 终点即直链，Cookie 已沿途收集
+            //   b) 200 直接中转媒体流 —— 终点 URL 本身可播（Content-Type 是 video/* 等）
+            //   c) 200 且 Content-Type 是文本 —— 终点是 strm 文本，需再解析里面的 URL
+            // 绝不能把媒体流二进制当文本嗅探（v1.1.6 首测就是栽在 matroska EBML 头上）
+            val resolved = Http.resolveRedirects(
+                url("/Items/${item.id}/Download", mapOf("api_key" to (accessToken ?: ""))),
+                source
             )
+            val ct = (resolved.contentType ?: "").lowercase()
+            val looksText = ct.contains("text/html") || ct.contains("text/plain")
+            if (resolved.status in 200..299 && looksText) {
+                // 形态 c：小读 128 字节解析出内层 URL，再走标准解析管线
+                // （只读 128 字节，绝不能用 body.string()——中转大文件会读爆内存）
+                val probe = Http.get(
+                    resolved.finalUrl, source,
+                    mapOf("Range" to "bytes=0-127", "User-Agent" to Http.DEFAULT_UA)
+                )
+                val head = try {
+                    probe.body?.byteStream()?.use { ins ->
+                        val buf = ByteArray(128)
+                        val n = ins.read(buf)
+                        if (n > 0) String(buf, 0, n, Charsets.UTF_8) else null
+                    }
+                } catch (_: Throwable) { null } finally { probe.close() }
+                val inner = StreamResolver.parseStrm(head ?: "")
+                    ?: return Result.failure(IllegalStateException(".strm 内容为空，无法解析直链"))
+                return StreamResolver.resolve(
+                    target = inner,
+                    source = source,
+                    startSec = item.positionSec,
+                    title = item.title
+                )
+            }
+            if (resolved.status in 200..399) {
+                // 形态 a/b：终点即直链，带 Cookie 直接交给 mpv
+                return Result.success(
+                    Playable(
+                        resolved.finalUrl,
+                        StreamResolver.headersFor(source, emptyMap(), resolved.cookies),
+                        item.positionSec,
+                        item.title
+                    )
+                )
+            }
+            return Result.failure(RuntimeException("Emby /Download 返回 HTTP ${resolved.status}"))
         }
 
         // ② 普通视频：用 Emby 的 stream 端点（Emby 会对本地文件直接给原流）
