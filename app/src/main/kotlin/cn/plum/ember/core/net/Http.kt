@@ -188,7 +188,13 @@ object Http {
     }
 
     /** 手动跟随 302，收集沿途所有 Set-Cookie 和最终 URL */
-    data class Resolved(val finalUrl: String, val cookies: Map<String, String>, val status: Int)
+    data class Resolved(
+        val finalUrl: String,
+        val cookies: Map<String, String>,
+        val status: Int,
+        /** 终点响应的 Content-Type（判断终点是媒体流还是文本/网页） */
+        val contentType: String? = null
+    )
 
     suspend fun resolveRedirects(
         url: String,
@@ -198,10 +204,12 @@ object Http {
     ): Resolved = withContext(Dispatchers.IO) {
         var current = url
         var status = 0
+        var contentType: String? = null
         val cookies = linkedMapOf<String, String>()
         repeat(maxHops) {
             val resp = get(current, source, headers)
             status = resp.code
+            contentType = resp.header("Content-Type")
             // 收集本次响应下发的所有 Set-Cookie
             resp.headers("Set-Cookie").forEach { raw ->
                 val kv = raw.substringBefore(';').trim()
@@ -215,9 +223,9 @@ object Http {
                 current = java.net.URI(current).resolve(java.net.URI(loc)).toString()
                 return@repeat
             }
-            return@withContext Resolved(current, cookies, status)
+            return@withContext Resolved(current, cookies, status, contentType)
         }
-        Resolved(current, cookies, status)
+        Resolved(current, cookies, status, contentType)
     }
 
     /** 判断 URL 是否需要走 resolveRedirects（网盘 302 场景） */
