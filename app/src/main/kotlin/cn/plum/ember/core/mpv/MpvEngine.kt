@@ -78,6 +78,8 @@ class MpvEngine(
     private var pending: Playable? = null
     /** seek 期间不再回写 UI 位置，避免进度条抖动 */
     @Volatile private var seeking = false
+    /** 起播 seek：loadfile 后等 file-loaded 再跳（内嵌 mpv 的 loadfile 不支持 start 选项） */
+    @Volatile private var pendingSeekSec: Long = -1L
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -128,7 +130,7 @@ class MpvEngine(
             m.observeProperty("time-pos", MPV_FORMAT_DOUBLE)
             m.observeProperty("duration", MPV_FORMAT_DOUBLE)
             m.observeProperty("demuxer-cache-time", MPV_FORMAT_DOUBLE)
-            m.observeProperty("paused", MPV_FORMAT_FLAG)
+            m.observeProperty("pause", MPV_FORMAT_FLAG)
             m.observeProperty("paused-for-cache", MPV_FORMAT_FLAG)
             m.observeProperty("speed", MPV_FORMAT_DOUBLE)
             m.observeProperty("track-list", MPV_FORMAT_NODE)
@@ -214,6 +216,7 @@ class MpvEngine(
         surfaceReady = false
         started = false
         pending = null
+        pendingSeekSec = -1L
         scope.cancel()
     }
 
@@ -266,16 +269,13 @@ class MpvEngine(
             Log.w(TAG, "set headers failed: ${t.message}")
         }
 
-        // ---- loadfile：start 选项传起始位置 ----
-        // ⚠️ 该内嵌 mpv 的 loadfile start 只收纯整数，带 + 号会报
-        //    "The loadfile option must be an integer"（模拟器实测踩坑）
+        // ---- loadfile：这个内嵌 mpv 的 loadfile 命令不支持第三参 options
+        //      （"start=155" 会被当 flags 解析报 "must be an integer"），
+        //      起播位置改为 file-loaded 事件后主动 seek（pendingSeekSec）----
         return try {
-            if (startSec > 5) {
-                m.command("loadfile", p.url, "replace", "start=$startSec")
-            } else {
-                m.command("loadfile", p.url, "replace")
-            }
-            Log.i(TAG, "loadfile issued: ${p.url.take(120)} (start=$startSec)")
+            m.command("loadfile", p.url, "replace")
+            pendingSeekSec = if (startSec > 5) startSec else -1L
+            Log.i(TAG, "loadfile issued: ${p.url.take(120)} (pendingSeek=$pendingSeekSec)")
             true
         } catch (t: Throwable) {
             Log.e(TAG, "loadfile failed: ${t.message}", t)
@@ -377,7 +377,8 @@ class MpvEngine(
             }
         }
         scope.launch {
-            m.propFlow<Boolean>("paused").collect { v ->
+            // ⚠️ mpv 的属性名是 "pause"（"paused" 不存在，getProperty 会报 not found）
+            m.propFlow<Boolean>("pause").collect { v ->
                 _state.value = _state.value.copy(playing = (v != true) && _state.value.loaded)
             }
         }
@@ -488,8 +489,20 @@ class MpvEngine(
         seeking = false
         _state.value = _state.value.copy(loaded = true, buffering = false, finished = false)
         Log.i(TAG, "file-loaded: loaded=true")
-        // mpv 的 loadfile 带 start=+N 时部分版本不触发 seek 事件，这里主动校正一次 UI 位置
         val m = mpv ?: return
+        // 起播位置（记忆播放）：file-loaded 后主动 seek
+        val ps = pendingSeekSec
+        pendingSeekSec = -1L
+        if (ps > 5) {
+            try {
+                m.command("seek", ps.toString(), "absolute")
+                _state.value = _state.value.copy(positionSec = ps.toDouble())
+                Log.i(TAG, "resume seek to $ps")
+            } catch (t: Throwable) {
+                Log.w(TAG, "resume seek failed: ${t.message}")
+            }
+        }
+        // mpv 的 loadfile 部分版本不触发 seek 事件，这里主动校正一次 UI 位置
         val pos = m.getPropertyDouble("time-pos") ?: 0.0
         if (pos > 0) _state.value = _state.value.copy(positionSec = pos)
     }
