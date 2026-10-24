@@ -155,9 +155,13 @@ fun PlayerScreen(
     }
 
     // ---- 记忆播放：自动跳过片头（起播位置在片头范围内时一次性 seek）----
+    // ⚠️ file-loaded 瞬间 durationSec 往往还是 0，必须等时长就绪再判断（实测踩坑）
     var introSkipped by remember { mutableStateOf(false) }
     LaunchedEffect(state.loaded) {
-        if (state.loaded && !introSkipped && settings.autoSkipIntro &&
+        if (!state.loaded || introSkipped) return@LaunchedEffect
+        var waited = 0
+        while (state.durationSec <= 0 && waited < 10_000) { delay(200); waited += 200 }
+        if (!introSkipped && settings.autoSkipIntro &&
             settings.introSkipSec > 0 && state.durationSec > 600 &&
             state.positionSec < settings.introSkipSec
         ) {
